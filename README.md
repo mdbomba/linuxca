@@ -1,3 +1,5 @@
+There is certificate (Subject) data located in openssl_intermediate.cnf and in set-ca.sh. If you want to change the certificate Subject info, you need to edit both.
+
 These scripts are consolidated primarily from the work represented at the following URLs
 
 https://www.golinuxcloud.com/openssl-create-certificate-chain-linux/
