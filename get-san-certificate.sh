@@ -14,7 +14,7 @@ prompt = no
 C   = US
 ST  = Arizona
 L   = Tombstone
-O   = BITS Corp
+O   = Bomba Information Technology Services LLC
 OU  = Consulting
 CN  = server.local
 
@@ -24,8 +24,10 @@ subjectAltName = @alt_names
 [alt_names]
 IP.1 = 10.5.5.67
 IP.2 = 10.5.5.68
+ip.3 = 10.5.5.69
 DNS.1 = servera.local
 DNS.2 = serverb.local
+DNS.3 = server.local
 ' > ./server_cert.cnf
 
 
