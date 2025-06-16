@@ -1,6 +1,6 @@
 There is certificate (Subject) data located in openssl_intermediate.cnf and in set-ca.sh. If you want to change the certificate Subject info, you need to edit both.
 
-Steps to get the CA up and running
+Steps to get the CA server up and running
 
     Prep linux 22.04 (ubuntu server), sign in and then
     $ sudo su
@@ -9,6 +9,8 @@ Steps to get the CA up and running
     # chmod +x set-ca.sh
     # ./set-ca.sh
 Results will be a CA you can use to issue SAN certificates. 
+
+If you do not have a dns server in your lab, you can use the script "set-dns.sh" on the CA server and have a dual purpose machine.
 
 I will post later script to generate SAN certiifcates.
 
