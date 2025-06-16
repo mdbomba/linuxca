@@ -67,7 +67,7 @@ authorityKeyIdentifier = keyid,issuer                       # Authority key iden
 countryName_default = US
 stateOrProvinceName_default = Arizona
 localityName_default = Tombstone
-0.organizationName_default = BITS Corp
+0.organizationName_default = Bomba Information Technology Services LLC
 organizationalUnitName_default = Consulting
 emailAddress_default = admin@bits.com
 
