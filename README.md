@@ -1,6 +1,7 @@
 There is certificate (Subject) data located in openssl_intermediate.cnf and in set-ca.sh. If you want to change the certificate Subject info, you need to edit both.
 
 Steps to get the CA up and running
+
     Prep linux 22.04 (ubuntu server), sign in and then
     $ sudo su
     # copy set-ca.sh, openssl_root.cnf and openssl_intermediate.cnf to the /root directory on a linux 22.04 server.
