@@ -3,7 +3,6 @@
 # Script to create key and SAN certificate (crt) files.
 # Version 20250618-001
 
-
 # EDITABLE PARAMETERS
 IP1="10.5.5.69"
 DNS1="server"
