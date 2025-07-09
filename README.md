@@ -1,13 +1,24 @@
-There is certificate (Subject) data located in openssl_intermediate.cnf and in set-ca.sh. If you want to change the certificate Subject info, you need to edit both.
+I did a full rebuild of the bash shell script that creates a standalone certificate authority on a linux os.
 
-Steps to get the CA server up and running
+The new script, config-ca.sh, created the root and intermediate configuraiton files and builds out the root and intermediate ca (creates private key and public cert files for both).
 
-    Prep linux 22.04 (ubuntu server), sign in and then
+The script has user configurable variables to defime C/ST/L/O/OU parameters that are needed to create the CA.
+
+The defaults are C=US/ST=Arizona/L=Tombstone/O=Company/OU=Lab  
+
+The script is intended to be ran as root. There is a check in the script that will cause it to abort if it is not ran as root. 
+
+Prep linux 22.04 (ubuntu server), sign in and then
     $ sudo su
-    # copy set-ca.sh, openssl_root.cnf and openssl_intermediate.cnf to the /root directory on a linux 22.04 server.
-    # edit set-ca.sh and openssl_intermediate.cnf to personalize CA (set your counrty - state - city - organization - org unit - in these files)
-    # chmod +x set-ca.sh
-    # ./set-ca.sh
+    # apt update
+    # apt upgrade -y
+    # copy config-ca.sh to the /root directory on a linux 22.04 server.
+    # edit config-ca.sh  to set your counrty - state - city - organization - org unit - in these files
+    # chmod +x config-ca.sh
+    # ./config-ca.sh
+
+The script runs with multiple check points that allow you to abort if ther eis a parameter or script error.
+
 Results will be a CA you can use to issue SAN certificates. 
 
 If you do not have a dns server in your lab, you can use the script "set-dns.sh" on the CA server and have a dual purpose machine.
