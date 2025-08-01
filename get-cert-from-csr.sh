@@ -84,7 +84,7 @@ openssl verify -CAfile $chain $CN.crt
 
 rm x509san
 rm $CN.cnf
-
+cp $chain $CN.chain
 
 
 

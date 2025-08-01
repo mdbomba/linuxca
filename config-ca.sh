@@ -8,13 +8,13 @@
 # EDIT BELOW PARAMETERS TO MEET YOUR REQUIREMENTS
 
 # BASIC HOST PARAMETERS
-HOSTNAME="ca"
+HOSTNAME="invca"
 DOMAINNAME='localnet'
-IFACE1="enp1s0"
-IP1="10.5.5.70/24"
-GW1="10.5.5.1"
-NS1='10.5.5.60'
-NS2='8.8.8.8'
+IFACE1="ens33"
+IP1="10.0.0.50/24"
+GW1="10.0.0.2"
+NS1='8.8.8.8'
+NS2='8.8.4.4'
 DFN='/etc/cloud/cloud.cfg.d/99-disable-network-config.cfg'    # Define name for cloud-init disablement file
 NPF='/etc/netplan/01-netconfig.yaml'    # Define name for netplan config file
 
@@ -355,18 +355,18 @@ echo ""
 
 # CREATE TRUST CHAIN CERTIFICATE
 echo "CREATING TRUST CHAIN FILE"
-cat "$dir/intermediateCA/certs/intermediate.cert.pem" "$dir/rootCA/certs/ca.cert.pem" > "$dir/intermediateCA/certs/ca-chain.cert.pem"
+cat "$dir/intermediateCA/certs/intermediate.cert.pem" "$dir/rootCA/certs/ca.cert.pem" > "$dir/intermediateCA/certs/intermediate.chain.pem"
 echo ""
 echo "Trust chain file contents displayed below"
 echo ""
-cat "$dir/intermediateCA/certs/ca-chain.cert.pem"
+cat "$dir/intermediateCA/certs/intermediate.chain.pem"
 echo ""
 read -p "If cert chain appears to be correct press enter, else press CRTL-C and fix script. : "
 echo ""
 
 
 echo "VERIFYING CERTIFICATE CHAIN FILE"
-openssl verify -CAfile '$dir/intermediateCA/certs/ca-chain.cert.pem" "$dir/intermediateCA/certs/intermediate.cert.pem"
+openssl verify -CAfile "$dir/intermediateCA/certs/intermediate.chain.pem" "$dir/intermediateCA/certs/intermediate.cert.pem"
 
 
 
