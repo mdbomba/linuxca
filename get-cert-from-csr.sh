@@ -44,6 +44,7 @@ done
 x=1
 for ip in "${ip_addresses[@]}"; do
   echo "IP.$x = $ip"  >> x509san
+  ((x++))
 done
 
 # CREATE CONFIG FILE FOR CERTIFICATE SERVICE REQUEST
