@@ -31,10 +31,6 @@ The other utility scripts in this repo help with creating certificates using thi
 
 Results will be a CA you can use to issue SAN certificates. 
 
-If you do not have a dns server in your lab, you can use the script "set-dns.sh" on the CA server and have a dual purpose machine.
-
-I will post later script to generate SAN certiifcates.
-
 These scripts are consolidated primarily from the work represented at the following URLs
 
 https://www.golinuxcloud.com/openssl-create-certificate-chain-linux/
