@@ -9,13 +9,21 @@ The defaults are C=US/ST=Arizona/L=Tombstone/O=Company/OU=Lab
 The script is intended to be ran as root. There is a check in the script that will cause it to abort if it is not ran as root. 
 
 Prep linux 22.04 (ubuntu server), sign in and then
+
     $ sudo su
+
     # apt update
+
     # apt upgrade -y
+
     # copy build-ca.sh to the /root directory on a linux 22.04 server.
+
     # edit build-ca.sh  to set your counrty - state - city - organization - org unit - in these files
+
     # chmod +x build-ca.sh
+
     # ./build-ca.sh
+
 
 The script runs with multiple check points that allow you to abort if ther eis a parameter or script error.
 
