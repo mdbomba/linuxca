@@ -1,6 +1,6 @@
 I did a full rebuild of the bash shell script that creates a standalone certificate authority on a linux os.
 
-The new script, config-ca.sh, created the root and intermediate configuraiton files and builds out the root and intermediate ca (creates private key and public cert files for both).
+The new script, build-ca.sh, created the root and intermediate configuraiton files and builds out the root and intermediate ca (creates private key and public cert files for both).
 
 The script has user configurable variables to defime C/ST/L/O/OU parameters that are needed to create the CA.
 
@@ -12,12 +12,14 @@ Prep linux 22.04 (ubuntu server), sign in and then
     $ sudo su
     # apt update
     # apt upgrade -y
-    # copy config-ca.sh to the /root directory on a linux 22.04 server.
-    # edit config-ca.sh  to set your counrty - state - city - organization - org unit - in these files
-    # chmod +x config-ca.sh
-    # ./config-ca.sh
+    # copy build-ca.sh to the /root directory on a linux 22.04 server.
+    # edit build-ca.sh  to set your counrty - state - city - organization - org unit - in these files
+    # chmod +x build-ca.sh
+    # ./build-ca.sh
 
 The script runs with multiple check points that allow you to abort if ther eis a parameter or script error.
+
+The other utility scripts in this repo help with creating certificates using this new CA. 
 
 Results will be a CA you can use to issue SAN certificates. 
 
