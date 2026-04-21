@@ -9,14 +9,15 @@
 
 # BASIC HOST PARAMETERS
 HOSTNAME="ca"
-DOMAINNAME='local'
+DOMAINNAME='demo.lab'
 
 # CA SPECIFIC PARAMETERS
 dir='/root/myCA'
 C='US'
 ST='Arizona'
 L='Tombstone'
-O='Local'
+O='lab'
+OU='demo'
 
 # DO NOT EDIT ANYTHING BELOW THIS LINE
 
