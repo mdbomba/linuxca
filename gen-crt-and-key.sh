@@ -1,42 +1,99 @@
 #!/bin/bash
-#
+# filename - gen-crt-and-key.sh
+# version - 20250721-02
+# description - Generates a server private key, CSR, signed TLS certificate, and PFX file
+# restrictions - Must be run as root to access CA keys
+# usage - sudo bash gen-crt-and-key.sh
+
+set -e
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "ERROR: This script must be run as root."
+    exit 1
+fi
+
 export TERM=linux
 RED='\033[0;31m'
-GREEN='\033[0;32m'  # echo -e "${GREEN}ZIP Archive created"
+GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
-NC='\033[0m'        # No Color (resets back to default)
-# 
-# Ensure zip is installed 
+NC='\033[0m'
+
+# Ensure zip is installed
 if ! command -v zip &> /dev/null; then
     echo "zip command not found. Installing..."
-    sudo apt update && sudo apt install zip -y
+    apt-get update -qq && apt-get install -y -qq zip
 fi
-#
+
+# --- Load or create vars file ---
+VARS_FILE="/root/ca-vars.conf"
+
+load_vars() {
+    [ -f "$VARS_FILE" ] && source "$VARS_FILE"
+}
+
+prompt_var() {
+    local var_name="$1"
+    local prompt_msg="$2"
+    local current_val="${!var_name}"
+    if [ -z "$current_val" ]; then
+        read -p "$prompt_msg" "$var_name"
+    fi
+}
+
+save_vars() {
+    cat > "$VARS_FILE" << EOF
+# ca-vars.conf - Shared variables for CA scripts
+# Edit these values or delete them to be prompted on next run
+
+# CA hierarchy location
+CA_DIR='${CA_DIR}'
+
+# Certificate subject fields
+C='${C}'
+ST='${ST}'
+L='${L}'
+O='${O}'
+OU='${OU}'
+EOF
+}
+
+load_vars
+
+prompt_var CA_DIR "Enter CA directory path [/root/myCA]: "
+CA_DIR="${CA_DIR:-/root/myCA}"
+prompt_var C "Enter Country Name (2 letter code): "
+prompt_var ST "Enter State or Province Name: "
+prompt_var L "Enter Locality Name: "
+prompt_var O "Enter Organization Name: "
+prompt_var OU "Enter Organizational Unit Name: "
+
+# Server-specific prompts
+prompt_var Name "Enter file name prefix (e.g. chef360): "
+prompt_var CN "Enter Common Name / FQDN (e.g. chef360.demo.lab): "
+prompt_var CN2 "Enter short hostname (e.g. chef360): "
+prompt_var IP1 "Enter primary IP address: "
+
+# Optional
+if [ -z "$IP2" ]; then
+    read -p "Enter secondary IP address (or press enter to skip): " IP2
+fi
+if [ -z "$password" ]; then
+    read -p "Enter password for PFX and ZIP archive [password]: " password
+    password="${password:-password}"
+fi
+
+save_vars
+
+# Debug mode
+debug="${debug:-no}"
+
 ######################################################################################
-#          START OF PARAMETERS THAT CAN BE EDITED BEFORE RUNNING SCRIPT              #
-######################################################################################
-debug="no"                  # yes will dump debug data, any other value will not
-password="password"         # Used to encrypt zip archive file and pfx certificate file
-Name="chef360"              # Root Name used to name all generated files
-CN="chef360.demo.lab"       # FQDN for site requesting certificate
-CN2="chef360"               # Hostname for site requesting certificate
-IP1="10.0.0.50"             # Primary IP address for site requesting certificate
-IP2=""                      # Secondary IP address for site requesting certificate
-######################################################################################
-#           END OF PARAMETERS THAT CAN BE EDITED BEFORE RUNNING SCRIPT               #
-######################################################################################
-#
-######################################################################################
-#  START OF PARAMETERS THAT SHOULD NOT BE EDITED UNLESS YOU KNOW WHAT YOU ARE DOING  #
-######################################################################################
+dir="$CA_DIR"
 pwd=$(pwd)
-ica_cert="/root/myCA/intermediateCA/certs/intermediate.cert.pem"
-ica_chain="/root/myCA/intermediateCA/certs/intermediate.chain.pem"
-ica_key="/root/myCA/intermediateCA/private/intermediate.key.pem"
-rca_cert="/root/myCA/rootCA/certs/ca.cert.pem"
-C="US"
-O="lab"
-OU="demo"
+ica_cert="$dir/intermediateCA/certs/intermediate.cert.pem"
+ica_chain="$dir/intermediateCA/certs/intermediate.chain.pem"
+ica_key="$dir/intermediateCA/private/intermediate.key.pem"
+rca_cert="$dir/rootCA/certs/ca.cert.pem"
 csr="${pwd}/${Name}.csr"
 cnf="${pwd}/${Name}.cnf"
 key="${pwd}/${Name}.key"
@@ -51,31 +108,33 @@ pfx_file="${pwd}/${Name}.pfx"
 [[ -n "$password" ]] && PASS_ARG2="-jP ${password}"
 [[ -z "$password" ]] && PASS_ARG2="-j"
 ######################################################################################
-#   END OF PARAMETERS THAT SHOULD NOT BE EDITED UNLESS YOU KNOW WHAT YOU ARE DOING   #
+
+# Verify CA files exist
+for f in "$ica_cert" "$ica_chain" "$ica_key" "$rca_cert"; do
+    if [ ! -f "$f" ]; then
+        echo "ERROR: CA file not found: $f"
+        echo "Have you run build-ca.sh first?"
+        exit 1
+    fi
+done
+
 ######################################################################################
-#
+#                     COPY CA CERT AND CHAIN FILES                                   #
 ######################################################################################
-#                     START COPYING CA CERT AND CHAIN FILES                          #
+cp "$ica_chain" "${chain}"
+cp "$ica_cert" "${ica}"
+cp "$rca_cert" "${rca}"
+
 ######################################################################################
-sudo cp $ica_chain "${chain}" && sudo chown "$USER:$USER" "${chain}"
-sudo cp $ica_cert "${ica}" && sudo chown "$USER:$USER" "${ica}"
-sudo cp $rca_cert "${rca}" && sudo chown "$USER:$USER" "${rca}"
+#        CONSTRUCT OPENSSL CONFIG FILE FOR SAN CERTS                                 #
 ######################################################################################
-#                      END COPYING CA CERT AND CHAIN FILES                           #
-######################################################################################
-#
-######################################################################################
-#        START CONSTRUCTION OF OENSSL CONFIG FILE NEEDED TO ISSUE SAN CERTS          #
-######################################################################################
-# --- Construct the SAN (Subject Alternative Names) string dynamically ---
 SAN_LIST=()
 [[ -n "$CN" ]]  && SAN_LIST+=("DNS:${CN}")
 [[ -n "$CN2" ]] && SAN_LIST+=("DNS:${CN2}")
 [[ -n "$IP1" ]] && SAN_LIST+=("IP:${IP1}")
 [[ -n "$IP2" ]] && SAN_LIST+=("IP:${IP2}")
-# Join array elements with commas (e.g., "DNS:chef360.demo.lab,IP:10.0.0.50")
 SAN_VALUE=$(IFS=,; echo "${SAN_LIST[*]}")
-# --- Create the OpenSSL Config File ---
+
 cat << EOF > "$cnf"
 [req]
 default_bits       = 2048
@@ -94,118 +153,68 @@ keyUsage = nonRepudiation, digitalSignature, keyEncipherment
 extendedKeyUsage = serverAuth
 subjectAltName = $SAN_VALUE
 EOF
+
 ######################################################################################
-#          END CONSTRUCTION OF OENSSL CONFIG FILE NEEDED TO ISSUE SAN CERTS          #
-######################################################################################
-#
-######################################################################################
-#                           START OF DEBUG SECTION                                   #
+#                           DEBUG SECTION                                             #
 ######################################################################################
 if [ "$debug" = "yes" ]; then
   echo ""
-  echo " --- CONFIGURATION VARIABLES BOTH STATIC AND DYNAMIC --- "
-  echo "C= $C"
-  echo "O= $O"
-  echo "OU= $OU"
-  echo "CN = $CN"
-  echo "CN2 = $CN2"
-  echo "IP1 = $IP1"
-  echo "IP2 = $IP2"
-  echo "Name= $Name"
-  echo "ica_cert= $ica_cert"
-  echo "ica_chain= $ica_chain"
-  echo "ica_key= $ica_key"
-  echo "rca_cert= $rca_cert"
-  echo ""
-  echo "csr= $csr"
-  echo "cnf= $cnf"
-  echo "key= $key"
-  echo "crt= $crt"
-  echo "chain= $chain"
-  echo "ica= $ica"
-  echo "rca= $rca"
-  echo "archive= $archive"
-  echo "pfx_file= $pfx_file"
-  echo "password= $password"
+  echo " --- CONFIGURATION VARIABLES --- "
+  echo "C=$C  O=$O  OU=$OU  CN=$CN  CN2=$CN2  IP1=$IP1  IP2=$IP2"
+  echo "Name=$Name"
   echo "--- CONTENTS OF OPENSSL CONFIG FILE ---"
-  cat $cnf
-  echo " ------------------------------------------------------- "
+  cat "$cnf"
   echo ""
-  echo -n "Press Enter to continue to build certs: "
-  read Z
+  read -p "Press Enter to continue: "
 fi
+
 ######################################################################################
-#                             END OF DEBUG SECTION                                   #
+#                       CREATE SERVER KEY FILE                                        #
 ######################################################################################
-#
-######################################################################################
-#                       START CREATION OF SERVER KEY FILE                            #
-######################################################################################
-# --- Create key file --- 
 echo ""
 echo -e "${GREEN}Creating key file named [ ${YELLOW}${key}${GREEN} ]${NC}"
 openssl req -newkey rsa:2048 -nodes -keyout "${key}" -out "${csr}" \
--subj "/CN=$CN/OU=$OU/O=$O/C=$C" -config "${cnf}" -batch
-sleep 2
-# --- Verifying key file --- 
+  -subj "/CN=$CN/OU=$OU/O=$O/C=$C" -config "${cnf}" -batch
+
 echo ""
 echo -e "${GREEN}Verifying key file named [ ${YELLOW}${key}${GREEN} ]${NC}"
 openssl rsa -in "${key}" -check -noout
-sleep 2
+
 ######################################################################################
-#                         END CREATION OF SERVER KEY FILE                            #
+#                        CREATE SERVER CRT FILE                                      #
 ######################################################################################
-#
-######################################################################################
-#                        START CREATION OF SERVER CRT FILE                           #
-######################################################################################
-# --- Create crt file --- 
 echo ""
 echo -e "${GREEN}Creating crt file named [ ${YELLOW}${crt}${GREEN} ]${NC}"
-sudo openssl x509 -req -in "${csr}" -CA "${ica_cert}" -CAkey "${ica_key}" \
--CAcreateserial -out "${crt}" -days 365 -sha256 \
--extfile "${cnf}" -extensions v3_req > /dev/null
-sleep 2
-sudo chown $USER:$USER "$crt"
-# --- Verifying crt file ---
+openssl x509 -req -in "${csr}" -CA "${ica_cert}" -CAkey "${ica_key}" \
+  -CAcreateserial -out "${crt}" -days 365 -sha256 \
+  -extfile "${cnf}" -extensions v3_req
+
 echo ""
 echo -e "${GREEN}Verify certificate file named [ ${YELLOW}${crt}${GREEN} ]${NC}"
 openssl verify -CAfile "${chain}" "${crt}"
-sleep 2
-# --- Displaying crt file ---
+
 echo ""
 echo -e "${GREEN}Display certificate file named [ ${YELLOW}${crt}${GREEN} ]${NC}"
-sudo openssl x509 -in "${crt}" -text -noout
-sleep 2
+openssl x509 -in "${crt}" -text -noout
+
 ######################################################################################
-#                         END CREATION OF SERVER CRT FILE                            #
-######################################################################################
-#
-######################################################################################
-#                        START CREATION OF SERVER PFX FILE                           #
+#                        CREATE SERVER PFX FILE                                      #
 ######################################################################################
 echo ""
 echo -e "${GREEN}Creating PFX file: ${YELLOW}${pfx_file}${NC}"
 openssl pkcs12 -export -out "$pfx_file" \
--inkey "${key}" -in "${crt}" -certfile "${chain}" $PASS_ARG
+  -inkey "${key}" -in "${crt}" -certfile "${chain}" $PASS_ARG
+
 ######################################################################################
-#                         END CREATION OF SERVER KEY FILE                            #
-######################################################################################
-#
-######################################################################################
-#            START CREATION OF ARCHIVE PACKAGE FOR ALL GENERATED FILES               #
+#            CREATE ARCHIVE PACKAGE FOR ALL GENERATED FILES                           #
 ######################################################################################
 echo ""
-echo -e "${GREEN}Creating ZIP archive: $YELLOW}${archive}${NC}"
-sudo zip $PASS_ARG2 "${archive}" "${crt}" "${key}" \
-"${chain}" "${ica}" "${rca}" "${pfx_file}"
-sudo chown "$USER:$USER" "${archive}"
+echo -e "${GREEN}Creating ZIP archive: ${YELLOW}${archive}${NC}"
+zip $PASS_ARG2 "${archive}" "${crt}" "${key}" \
+  "${chain}" "${ica}" "${rca}" "${pfx_file}"
+
 ######################################################################################
-#              END CREATION OF ARCHIVE PACKAGE FOR ALL GENERATED FILES               #
-######################################################################################
-#
-######################################################################################
-#                    START DISPLAY OF CRITICAL INFORMATION                           #
+#                    DISPLAY CRITICAL INFORMATION                                     #
 ######################################################################################
 echo ""
 echo "#########################################################################"
@@ -215,20 +224,13 @@ zip -sf "$archive"
 echo ""
 echo "#########################################################################"
 echo ""
-echo "#########################################################################"
-echo -e "${GREEN}***** DECRYPT PASSWORD FOR PFX AND ARCHIVE FILE IS [ ${YELLOW}${password}${NC} ]   ****** "
-echo "#########################################################################"
+echo -e "${GREEN}***** DECRYPT PASSWORD FOR PFX AND ARCHIVE FILE IS [ ${YELLOW}${password}${NC} ]"
 echo ""
 echo "#########################################################################"
 echo "###########          LIST OF ALL GENERATED FILES              ###########"
 echo ""
 ls -la "${pwd}/${Name}"*
 echo ""
-echo "#########################################################################"
-echo ""
 echo -e "${YELLOW}#########################################################################"
-echo -e "${YELLOW}###########              END OF SCRIPT                        ###########"
-echo -e "${YELLOW}#########################################################################"
-
-
-
+echo -e "###########              END OF SCRIPT                        ###########"
+echo -e "#########################################################################${NC}"

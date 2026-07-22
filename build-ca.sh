@@ -1,49 +1,67 @@
 #!/bin/bash
-# filename - config-ca.sh
-# version - 20250708-01
-# description - Script to create a linux certificate authority
-# restrictions - Script must be ran using sudo or sudo su
-# Script will create a new 
+# filename - build-ca.sh
+# version - 20250721-02
+# description - Script to create a linux Root and Intermediate certificate authority
+# restrictions - Script must be run as root
+# CA hierarchy is created in the location specified by CA_DIR in ca-vars.conf
 
-# EDIT BELOW PARAMETERS TO MEET YOUR REQUIREMENTS
+set -e
 
-# BASIC HOST PARAMETERS
-HOSTNAME="ca"
-DOMAINNAME='demo.lab'
-
-# CA SPECIFIC PARAMETERS
-dir='/root/myCA'
-C='US'
-ST='Arizona'
-L='Tombstone'
-O='lab'
-OU='demo'
-
-# DO NOT EDIT ANYTHING BELOW THIS LINE
-
-# Test to see if script is running as root
-if [ "$(id -u)" -eq 0 ]; then
-    echo "You are running this script as root."
-else
-    echo "You are NOT running this script as root. Script will now terminate."
-    read -p "Press enter to terminate the script"
+if [ "$(id -u)" -ne 0 ]; then
+    echo "ERROR: This script must be run as root."
     exit 1
 fi
 
-# Enable current user to use without security prompts
-echo "Enabling $USER to run sudo without a password"
-echo "$USER ALL=(ALL) NOPASSWD: ALL" | tee "/etc/sudoers.d/$USER"
-chown root:root "/etc/sudoers.d/$USER"
-chmod 440 "/etc/sudoers.d/$USER"
+# --- Load or create vars file ---
+VARS_FILE="/root/ca-vars.conf"
+
+load_vars() {
+    [ -f "$VARS_FILE" ] && source "$VARS_FILE"
+}
+
+prompt_var() {
+    local var_name="$1"
+    local prompt_msg="$2"
+    local current_val="${!var_name}"
+    if [ -z "$current_val" ]; then
+        read -p "$prompt_msg" "$var_name"
+    fi
+}
+
+save_vars() {
+    cat > "$VARS_FILE" << EOF
+# ca-vars.conf - Shared variables for CA scripts
+# Edit these values or delete them to be prompted on next run
+
+# CA hierarchy location
+CA_DIR='${CA_DIR}'
+
+# Certificate subject fields
+C='${C}'
+ST='${ST}'
+L='${L}'
+O='${O}'
+OU='${OU}'
+EOF
+    echo "Variables saved to $VARS_FILE"
+}
+
+load_vars
+
+prompt_var CA_DIR "Enter CA directory path [/root/myCA]: "
+CA_DIR="${CA_DIR:-/root/myCA}"
+prompt_var C "Enter Country Name (2 letter code): "
+prompt_var ST "Enter State or Province Name: "
+prompt_var L "Enter Locality Name: "
+prompt_var O "Enter Organization Name: "
+prompt_var OU "Enter Organizational Unit Name: "
+
+save_vars
+
+dir="$CA_DIR"
 
 # Ensure tree is installed
-apt install -y tree
-
-echo ""
-echo "Network Configuration Modified - See below"
-ip -br a
-
-# START CONFIGURATION OF AN OPENSSL CERTIFICATE AUTHORITY
+apt install -y -qq tree
 
 # CREATE DIRECTORY AND DEFAULT FILE STRUCTURES
 mkdir -p  $dir/rootCA/{certs,crl,newcerts,private,csr}
@@ -61,51 +79,52 @@ tree $dir
 echo ""
 
 read -p "If directory structure is correct, press enter, else press CTRL-C and fix script. : " 
-#
+
 # CREATE CONFIG FILE FOR ROOT CERTIFICATE
 ROOTCNF="$dir/openssl_root.cnf"
 
 cat <<EOF > "$ROOTCNF"
-[ ca ]                                                   # The default CA section
-default_ca              = CA_default                     # The default CA name
-[ CA_default ]                                           # Default settings for the CA
-dir                     = $dir/rootCA                    # CA directory
-certs                   = $dir/rootCA/certs              # Certificates directory
-crl_dir                 = $dir/rootCA/crl                # CRL directory
-new_certs_dir           = $dir/rootCA/newcerts           # New certificates directory
-database                = $dir/rootCA/index.txt          # Certificate index file
-serial                  = $dir/rootCA/serial             # Serial number file
-RANDFILE                = $dir/rootCA/private/.rand      # Random number file
-private_key             = $dir/rootCA/private/ca.key.pem # Root CA private key
-certificate             = $dir/rootCA/certs/ca.cert.pem  # Root CA certificate
-crl                     = $dir/rootCA/crl/ca.crl.pem     # Root CA CRL
-crlnumber               = $dir/rootCA/crlnumber          # Root CA CRL number
-crl_extensions          = crl_ext                        # CRL extensions
-default_crl_days        = 30                             # Default CRL validity days
-default_md              = sha256                         # Default message digest
-preserve                = no                             # Preserve existing extensions
-email_in_dn             = no                             # Exclude email from the DN
-name_opt                = ca_default                     # Formatting options for names
-cert_opt                = ca_default                     # Certificate output options
-policy                  = policy_strict                  # Certificate policy
-unique_subject          = no                             # Allow multiple certs with the same DN
+[ ca ]
+default_ca              = CA_default
 
-[ policy_strict ]                                        # Policy for stricter validation
-countryName             = match                          # Must match the issuer's country
-stateOrProvinceName     = match                          # Must match the issuer's state
-organizationName        = match                          # Must match the issuer's organization
-organizationalUnitName  = optional                       # Organizational unit is optional
-commonName              = supplied                       # Must provide a common name
-emailAddress            = optional                       # Email address is optional
+[ CA_default ]
+dir                     = $dir/rootCA
+certs                   = $dir/rootCA/certs
+crl_dir                 = $dir/rootCA/crl
+new_certs_dir           = $dir/rootCA/newcerts
+database                = $dir/rootCA/index.txt
+serial                  = $dir/rootCA/serial
+RANDFILE                = $dir/rootCA/private/.rand
+private_key             = $dir/rootCA/private/ca.key.pem
+certificate             = $dir/rootCA/certs/ca.cert.pem
+crl                     = $dir/rootCA/crl/ca.crl.pem
+crlnumber               = $dir/rootCA/crlnumber
+crl_extensions          = crl_ext
+default_crl_days        = 30
+default_md              = sha256
+preserve                = no
+email_in_dn             = no
+name_opt                = ca_default
+cert_opt                = ca_default
+policy                  = policy_strict
+unique_subject          = no
 
-[ req ]                                                  # Request settings
-default_bits            = 2048                           # Default key size
-distinguished_name      = req_distinguished_name         # Default DN template
-string_mask             = utf8only                       # UTF-8 encoding
-default_md              = sha256                         # Default message digest
-prompt                  = no                             # Non-interactive mode
+[ policy_strict ]
+countryName             = match
+stateOrProvinceName     = match
+organizationName        = match
+organizationalUnitName  = optional
+commonName              = supplied
+emailAddress            = optional
 
-[ req_distinguished_name ]                               # Template for the DN in the CSR
+[ req ]
+default_bits            = 4096
+distinguished_name      = req_distinguished_name
+string_mask             = utf8only
+default_md              = sha256
+prompt                  = no
+
+[ req_distinguished_name ]
 countryName             = Country Name (2 letter code)
 stateOrProvinceName     = State or Province Name (full name)
 localityName            = Locality Name (city)
@@ -114,14 +133,14 @@ organizationalUnitName  = Organizational Unit Name (section)
 commonName              = Common Name (your domain)
 emailAddress            = Email Address
 
-[ v3_ca ]                                                # Root CA certificate extensions
-subjectKeyIdentifier    = hash                           # Subject key identifier
-authorityKeyIdentifier  = keyid:always,issuer            # Authority key identifier
-basicConstraints        = critical, CA:true              # Basic constraints for a CA
-keyUsage                = critical, keyCertSign, cRLSign # Key usage for a CA
+[ v3_ca ]
+subjectKeyIdentifier    = hash
+authorityKeyIdentifier  = keyid:always,issuer
+basicConstraints        = critical, CA:true
+keyUsage                = critical, keyCertSign, cRLSign
 
-[ crl_ext ]                                              # CRL extensions
-authorityKeyIdentifier  = keyid:always,issuer            # Authority key identifier
+[ crl_ext ]
+authorityKeyIdentifier  = keyid:always,issuer
 
 [ v3_intermediate_ca ]
 subjectKeyIdentifier    = hash
@@ -129,12 +148,13 @@ authorityKeyIdentifier  = keyid:always,issuer
 basicConstraints        = critical, CA:true, pathlen:0
 keyUsage                = critical, digitalSignature, cRLSign, keyCertSign
 EOF
-echo ''
+
+echo ""
 echo "Config file for root certificate created. See below"
 echo ""
 cat $ROOTCNF
 echo ""
-read -p "If configuration file is correct press ENTER, else press CRTL-C and fix script : "
+read -p "If configuration file is correct press ENTER, else press CTRL-C and fix script : "
 
 # ROOT CA KEY AND CERTIFICATE GENERATION
 echo ""
@@ -142,14 +162,12 @@ echo "GENERATING ROOT CA PRIVATE KEY"
 openssl genrsa -out "$dir/rootCA/private/ca.key.pem" 4096
 chmod 400 "$dir/rootCA/private/ca.key.pem"
 echo ""
-echo "Root certiicate private key created. See below."
-echo ""
-cat "$dir/rootCA/private/ca.key.pem"
+echo "Root CA private key created."
 echo ""
 echo "SHOW CONTENTS OF PRIVATE KEY"
 openssl rsa -noout -text -in "$dir/rootCA/private/ca.key.pem"
 echo ""
-read -p "If private key appears to be correct press enter, else press CRTL-C and fix script. : "
+read -p "If private key appears to be correct press enter, else press CTRL-C and fix script. : "
 echo ""
 
 echo "GENERATING ROOT CA PUBLIC CERTIFICATE"
@@ -158,57 +176,56 @@ chmod 444 "$dir/rootCA/certs/ca.cert.pem"
 echo ""
 echo "SHOW CONTENT OF ROOT PUBLIC CERTIFICATE"
 echo ""
-openssl x509 -noout -text -in ~/myCA/rootCA/certs/ca.cert.pem
+openssl x509 -noout -text -in "$dir/rootCA/certs/ca.cert.pem"
 echo ""
-read -p "If rooot ca public key appears to be correct press enter, else press CRTL-C and fix script. : "
+read -p "If root CA public certificate appears to be correct press enter, else press CTRL-C and fix script. : "
 echo ""
 
-#
 # INTERMEDIATE CA KEY AND CERTIFICATE GENERATION
 INTERCNF="$dir/openssl_intermediate.cnf"
 
 cat <<EOF > $INTERCNF
-[ ca ]                                                   # The default CA section
-default_ca              = CA_default                     # The default CA name
+[ ca ]
+default_ca              = CA_default
 
-[ CA_default ]                                           # Default settings - intermediate CA
-dir                     = $dir/intermediateCA            # Intermediate CA directory
-certs                   = $dir/intermediateCA/certs      # Certificates directory
-crl_dir                 = $dir/intermediateCA/crl        # CRL directory
-new_certs_dir           = $dir/intermediateCA/newcerts   # New certificates directory
-database                = $dir/intermediateCA/index.txt  # Certificate index file
-serial                  = $dir/intermediateCA/serial     # Serial number file
-RANDFILE                = $dir/intermediateCA/private/.rand                  # Random number file
-private_key             = $dir/intermediateCA/private/intermediate.key.pem   # Intermediate CA private key
-certificate             = $dir/intermediateCA/certs/intermediate.cert.pem    # Intermediate CA certificate
-crl                     = $dir/intermediateCA/crl/intermediate.crl.pem       # Intermediate CA CRL
-crlnumber               = $dir/intermediateCA/crlnumber     # Intermediate CA CRL number
-crl_extensions          = crl_ext                           # CRL extensions
-default_crl_days        = 30                                # Default CRL validity days
-default_md              = sha256                            # Default message digest
-preserve                = no                                # Preserve existing extensions
-email_in_dn             = no                                # Exclude email from the DN
-name_opt                = ca_default                        # Formatting options for names
-cert_opt                = ca_default                        # Certificate output options
-policy                  = policy_loose                      # Certificate policy
+[ CA_default ]
+dir                     = $dir/intermediateCA
+certs                   = $dir/intermediateCA/certs
+crl_dir                 = $dir/intermediateCA/crl
+new_certs_dir           = $dir/intermediateCA/newcerts
+database                = $dir/intermediateCA/index.txt
+serial                  = $dir/intermediateCA/serial
+RANDFILE                = $dir/intermediateCA/private/.rand
+private_key             = $dir/intermediateCA/private/intermediate.key.pem
+certificate             = $dir/intermediateCA/certs/intermediate.cert.pem
+crl                     = $dir/intermediateCA/crl/intermediate.crl.pem
+crlnumber               = $dir/intermediateCA/crlnumber
+crl_extensions          = crl_ext
+default_crl_days        = 30
+default_md              = sha256
+preserve                = no
+email_in_dn             = no
+name_opt                = ca_default
+cert_opt                = ca_default
+policy                  = policy_loose
 
-[ policy_loose ]                                            # Policy for less strict validation
-countryName             = optional                          # Country is optional
-stateOrProvinceName     = optional                          # State or province is optional
-localityName            = optional                          # Locality is optional
-organizationName        = optional                          # Organization is optional
-organizationalUnitName  = optional                          # Organizational unit is optional
-commonName              = supplied                          # Must provide a common name
-emailAddress            = optional                          # Email address is optional
+[ policy_loose ]
+countryName             = optional
+stateOrProvinceName     = optional
+localityName            = optional
+organizationName        = optional
+organizationalUnitName  = optional
+commonName              = supplied
+emailAddress            = optional
 
-[ req ]                                                     # Request settings
-default_bits            = 2048                              # Default key size
-distinguished_name      = req_distinguished_name            # Default DN template
-string_mask             = utf8only                          # UTF-8 encoding
-default_md              = sha256                            # Default message digest
-x509_extensions         = v3_intermediate_ca                # Extensions intermediate CA certificate
+[ req ]
+default_bits            = 4096
+distinguished_name      = req_distinguished_name
+string_mask             = utf8only
+default_md              = sha256
+x509_extensions         = v3_intermediate_ca
 
-[ req_distinguished_name ]                                  # Template for the DN in the CSR
+[ req_distinguished_name ]
 countryName             = Country Name (2 letter code)
 stateOrProvinceName     = State or Province Name
 localityName            = Locality Name
@@ -217,53 +234,52 @@ organizationalUnitName  = Organizational Unit Name
 commonName              = Common Name
 emailAddress            = Email Address
 
-[ v3_intermediate_ca ]                                      # Intermediate CA certificate extensions
-subjectKeyIdentifier    = hash                              # Subject key identifier
-authorityKeyIdentifier  = keyid:always,issuer               # Authority key identifier
-basicConstraints        = critical, CA:true, pathlen:0      # Basic constraints for a CA
-keyUsage                = critical, digitalSignature, cRLSign, keyCertSign    # Key usage for a CA
+[ v3_intermediate_ca ]
+subjectKeyIdentifier    = hash
+authorityKeyIdentifier  = keyid:always,issuer
+basicConstraints        = critical, CA:true, pathlen:0
+keyUsage                = critical, digitalSignature, cRLSign, keyCertSign
 
-[ crl_ext ]                                                 # CRL extensions
-authorityKeyIdentifier  = keyid:always                      # Authority key identifier
+[ crl_ext ]
+authorityKeyIdentifier  = keyid:always
 
-[ server_cert ]                                             # Server certificate extensions
-basicConstraints        = CA:FALSE                          # Not a CA certificate
-nsCertType              = server                            # Server certificate type
-keyUsage                = critical, digitalSignature, keyEncipherment  # Key usage for a server cert
-extendedKeyUsage        = serverAuth                        # Extended key usage for server authentication purposes (e.g., TLS/SSL servers).
-authorityKeyIdentifier  = keyid,issuer                      # Authority key identifier linking the certificate to the issuer's public key.
+[ server_cert ]
+basicConstraints        = CA:FALSE
+nsCertType              = server
+keyUsage                = critical, digitalSignature, keyEncipherment
+extendedKeyUsage        = serverAuth
+authorityKeyIdentifier  = keyid,issuer
+subjectKeyIdentifier    = hash
 EOF
 
-echo ''
+echo ""
 echo "Config file for intermediate certificate created. See below"
 echo ""
 cat $INTERCNF
 echo ""
-read -p "If configuration file is correct press ENTER, else press CRTL-C and fix script : "
+read -p "If configuration file is correct press ENTER, else press CTRL-C and fix script : "
 
 echo "GENERATING INTERMEDIATE CA PRIVATE KEY"
 openssl genrsa -out "$dir/intermediateCA/private/intermediate.key.pem" 4096
 chmod 400 "$dir/intermediateCA/private/intermediate.key.pem"
 echo ""
-echo "Intermediate certiicate private key created. See below."
-echo ""
-cat "$dir/intermediateCA/private/intermediate.key.pem"
+echo "Intermediate CA private key created."
 echo ""
 echo "SHOW CONTENTS OF PRIVATE KEY"
 openssl rsa -noout -text -in "$dir/intermediateCA/private/intermediate.key.pem"
 echo ""
-read -p "If private key appears to be correct press enter, else press CRTL-C and fix script. : "
+read -p "If private key appears to be correct press enter, else press CTRL-C and fix script. : "
 echo ""
 
 echo "GENERATING CSR TO REQUEST INTERMEDIATE CA PUBLIC CERTIFICATE"
 openssl req -config "$INTERCNF" -key "$dir/intermediateCA/private/intermediate.key.pem" -new -sha256 -out "$dir/intermediateCA/csr/intermediate.csr.pem" -subj "/C=$C/ST=$ST/L=$L/O=$O/OU=$OU/CN=Intermediate CA"
 
 echo ""
-echo "Certificate Service Request for Intermediate CA certificate generated, see below"
+echo "Certificate Signing Request for Intermediate CA certificate generated, see below"
 echo ""
 cat "$dir/intermediateCA/csr/intermediate.csr.pem"
 echo ""
-read -p "If csr appears to be correct press enter, else press CRTL-C and fix script. : "
+read -p "If CSR appears to be correct press enter, else press CTRL-C and fix script. : "
 echo ""
 
 echo "REQUESTING INTERMEDIATE CA PUBLIC CERTIFICATE USING CSR FILE"
@@ -272,30 +288,26 @@ chmod 444 "$dir/intermediateCA/certs/intermediate.cert.pem"
 echo ""
 cat "$dir/intermediateCA/certs/intermediate.cert.pem"
 echo ""
-read -p "If cert appears to be correct press enter, else press CRTL-C and fix script. : "
+read -p "If cert appears to be correct press enter, else press CTRL-C and fix script. : "
 echo ""
 
-
-
 echo "VERIFYING CERTIFICATE FILE IS NOW LOCATED IN THE CA INDEX FILE"
-echo "SHOULD RETURN A LINE INCLUDING"
-echo "V 330503082700Z 1000 unknown /C=$C/ST=$ST/L=$L/O=$O/OU=$OU/CN=Intermediate CA"
 echo ""
 cat "$dir/rootCA/index.txt"
 echo ""
-read -p "If index data appears to be correct press enter, else press CRTL-C and fix script. : "
+read -p "If index data appears to be correct press enter, else press CTRL-C and fix script. : "
 echo ""
 
 echo "SHOWING CONTENT OF INTERMEDIATE CA PUBLIC CERTIFICATE"
 openssl x509 -noout -text -in "$dir/intermediateCA/certs/intermediate.cert.pem"
 echo ""
-read -p "If cert contents appears to be correct press enter, else press CRTL-C and fix script. : "
+read -p "If cert contents appear to be correct press enter, else press CTRL-C and fix script. : "
 echo ""
 
 echo "VERIFYING INTERMEDIATE CERTIFICATE"
 openssl verify -CAfile "$dir/rootCA/certs/ca.cert.pem" "$dir/intermediateCA/certs/intermediate.cert.pem"
 echo ""
-read -p "If cert verification appears to be correct press enter, else press CRTL-C and fix script. : "
+read -p "If cert verification appears to be correct press enter, else press CTRL-C and fix script. : "
 echo ""
 
 # CREATE TRUST CHAIN CERTIFICATE
@@ -306,16 +318,19 @@ echo "Trust chain file contents displayed below"
 echo ""
 cat "$dir/intermediateCA/certs/intermediate.chain.pem"
 echo ""
-read -p "If cert chain appears to be correct press enter, else press CRTL-C and fix script. : "
+read -p "If cert chain appears to be correct press enter, else press CTRL-C and fix script. : "
 echo ""
-
 
 echo "VERIFYING CERTIFICATE CHAIN FILE"
 openssl verify -CAfile "$dir/intermediateCA/certs/intermediate.chain.pem" "$dir/intermediateCA/certs/intermediate.cert.pem"
 
+# COPY CONVENIENCE FILES TO /root
+cp "$dir/intermediateCA/certs/intermediate.cert.pem" /root/ica.crt
+cp "$dir/intermediateCA/certs/intermediate.chain.pem" /root/ica.chain
+cp "$dir/intermediateCA/private/intermediate.key.pem" /root/ica.key
 
-cp $dir/intermediateCA/certs/intermediate.cert.pem /root/ica.crt
-cp $dir/intermediateCA/certs/internediate.chain.pem /root/ica.chain
-cp $dir/intermediateCA/private/intermediate.key.pem /root/ica.key
-
-
+echo ""
+echo "CA build complete. Convenience copies placed in /root/:"
+echo "  /root/ica.crt   - Intermediate CA certificate"
+echo "  /root/ica.chain - Full chain (intermediate + root)"
+echo "  /root/ica.key   - Intermediate CA private key"
