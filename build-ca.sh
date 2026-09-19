@@ -1,84 +1,102 @@
 #!/bin/bash
 # filename - build-ca.sh
-# version - 20250721-02
+# version - 20260919-01
 # description - Script to create a linux Root and Intermediate certificate authority
 # restrictions - Script must be run as root
-# CA hierarchy is created in the location specified by CA_DIR in ca-vars.conf
+# CA hierarchy is created in the location selected at runtime.
 
-set -e
+set -euo pipefail
+
+umask 077
+
+PUBLIC_CA_DIR="/opt/myCA/public"
+dir="/root/myCA"
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "ERROR: This script must be run as root."
     exit 1
 fi
 
-# --- Load or create vars file ---
-VARS_FILE="/root/ca-vars.conf"
-
-load_vars() {
-    [ -f "$VARS_FILE" ] && source "$VARS_FILE"
-}
-
 prompt_var() {
     local var_name="$1"
     local prompt_msg="$2"
-    local current_val="${!var_name}"
-    if [ -z "$current_val" ]; then
-        read -p "$prompt_msg" "$var_name"
+    local current_val="${!var_name:-}"
+
+    if [[ -z "$current_val" ]]; then
+        read -r -p "$prompt_msg" "$var_name"
     fi
 }
 
-save_vars() {
-    cat > "$VARS_FILE" << EOF
-# ca-vars.conf - Shared variables for CA scripts
-# Edit these values or delete them to be prompted on next run
+# Determine whether a complete CA hierarchy already exists
+complete_ca=1
+for f in \
+    "$dir/rootCA/certs/ca.cert.pem" \
+    "$dir/rootCA/private/ca.key.pem" \
+    "$dir/intermediateCA/certs/intermediate.cert.pem" \
+    "$dir/intermediateCA/private/intermediate.key.pem"; do
+    [[ -f "$f" ]] || complete_ca=0
+done
 
-# CA hierarchy location
-CA_DIR='${CA_DIR}'
+if [[ -d "$dir" && "$complete_ca" -eq 1 ]]; then
+    printf 'Complete CA hierarchy found at %s. Skipping CA creation.\n' "$dir"
+    exit 0
+fi
 
-# Certificate subject fields
-C='${C}'
-ST='${ST}'
-L='${L}'
-O='${O}'
-OU='${OU}'
-EOF
-    echo "Variables saved to $VARS_FILE"
-}
+if [[ -d "$dir" && "$complete_ca" -eq 0 ]]; then
+    printf 'WARNING: Incomplete/broken CA hierarchy found at %s.\n' "$dir"
+    printf 'One or more required files are missing:\n'
+    printf '  %s\n' \
+        "$dir/rootCA/certs/ca.cert.pem" \
+        "$dir/rootCA/private/ca.key.pem" \
+        "$dir/intermediateCA/certs/intermediate.cert.pem" \
+        "$dir/intermediateCA/private/intermediate.key.pem"
+    printf '\n'
+    printf 'Rebuilding requires DELETING all of %s (and stale copies in %s).\n' "$dir" "$PUBLIC_CA_DIR"
+    printf 'This is PERMANENT - any certificates already issued become invalid.\n'
+    read -r -p "Type 'wipe' to delete and rebuild (anything else aborts): " confirm
+    if [[ "$confirm" == "wipe" ]]; then
+        printf 'Removing %s and %s ...\n' "$dir" "$PUBLIC_CA_DIR"
+        rm -rf "$dir"
+        rm -rf "$PUBLIC_CA_DIR"
+    else
+        printf 'Aborted. Remove/fix %s manually and re-run.\n' "$dir"
+        exit 1
+    fi
+fi
 
-load_vars
+prompt_var C "Enter 2 letter Country Code [US]: "
+C="${C:-US}"
+prompt_var ST "Enter State or Province [AZ]: "
+ST="${ST:-AZ}"
+prompt_var L "Enter Locality Name [Cochise]: "
+L="${L:-Cochise}"
+prompt_var O "Enter Organization Name [Lab]: "
+O="${O:-Lab}"
+prompt_var OU "Enter Organizational Unit Name [Home]: "
+OU="${OU:-Home}"
 
-prompt_var CA_DIR "Enter CA directory path [/root/myCA]: "
-CA_DIR="${CA_DIR:-/root/myCA}"
-prompt_var C "Enter Country Name (2 letter code): "
-prompt_var ST "Enter State or Province Name: "
-prompt_var L "Enter Locality Name: "
-prompt_var O "Enter Organization Name: "
-prompt_var OU "Enter Organizational Unit Name: "
-
-save_vars
-
-dir="$CA_DIR"
 
 # Ensure tree is installed
-apt install -y -qq tree
+if ! command -v tree > /dev/null; then
+    apt install -y -qq tree
+fi
 
 # CREATE DIRECTORY AND DEFAULT FILE STRUCTURES
-mkdir -p  $dir/rootCA/{certs,crl,newcerts,private,csr}
-mkdir -p  $dir/intermediateCA/{certs,crl,newcerts,private,csr}
-echo 1000 > $dir/rootCA/serial
-echo 1000 > $dir/intermediateCA/serial
-echo 0100 > $dir/rootCA/crlnumber 
-echo 0100 > $dir/intermediateCA/crlnumber
-touch     $dir/rootCA/index.txt
-touch     $dir/intermediateCA/index.txt
+mkdir -p "$dir/rootCA"/{certs,crl,newcerts,private,csr}
+mkdir -p "$dir/intermediateCA"/{certs,crl,newcerts,private,csr}
+echo 1000 > "$dir/rootCA/serial"
+echo 1000 > "$dir/intermediateCA/serial"
+echo 0100 > "$dir/rootCA/crlnumber" 
+echo 0100 > "$dir/intermediateCA/crlnumber"
+touch "$dir/rootCA/index.txt"
+touch "$dir/intermediateCA/index.txt"
 
-echo ""
-echo "Directory structure for CA created. See below"
-tree $dir
-echo ""
+printf '\n'
+printf 'Directory structure for CA created. See below\n'
+tree "$dir"
+printf '\n'
 
-read -p "If directory structure is correct, press enter, else press CTRL-C and fix script. : " 
+read -r -p "If directory structure is correct, press enter, else press CTRL-C and fix script. : " _
 
 # CREATE CONFIG FILE FOR ROOT CERTIFICATE
 ROOTCNF="$dir/openssl_root.cnf"
@@ -149,42 +167,42 @@ basicConstraints        = critical, CA:true, pathlen:0
 keyUsage                = critical, digitalSignature, cRLSign, keyCertSign
 EOF
 
-echo ""
-echo "Config file for root certificate created. See below"
-echo ""
-cat $ROOTCNF
-echo ""
-read -p "If configuration file is correct press ENTER, else press CTRL-C and fix script : "
+printf '\n'
+printf 'Config file for root certificate created. See below\n'
+printf '\n'
+cat "$ROOTCNF"
+printf '\n'
+read -r -p "If configuration file is correct press ENTER, else press CTRL-C and fix script : " _
 
 # ROOT CA KEY AND CERTIFICATE GENERATION
-echo ""
-echo "GENERATING ROOT CA PRIVATE KEY"
-openssl genrsa -out "$dir/rootCA/private/ca.key.pem" 4096
+printf '\n'
+printf 'GENERATING ROOT CA PRIVATE KEY\n'
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 -out "$dir/rootCA/private/ca.key.pem"
 chmod 400 "$dir/rootCA/private/ca.key.pem"
-echo ""
-echo "Root CA private key created."
-echo ""
-echo "SHOW CONTENTS OF PRIVATE KEY"
-openssl rsa -noout -text -in "$dir/rootCA/private/ca.key.pem"
-echo ""
-read -p "If private key appears to be correct press enter, else press CTRL-C and fix script. : "
-echo ""
+printf '\n'
+printf 'Root CA private key created.\n'
+printf '\n'
+printf 'CHECKING ROOT CA PRIVATE KEY\n'
+openssl rsa -check -noout -in "$dir/rootCA/private/ca.key.pem"
+printf '\n'
+read -r -p "If private key appears to be correct press enter, else press CTRL-C and fix script. : " _
+printf '\n'
 
-echo "GENERATING ROOT CA PUBLIC CERTIFICATE"
+printf 'GENERATING ROOT CA PUBLIC CERTIFICATE\n'
 openssl req -config "$ROOTCNF" -key "$dir/rootCA/private/ca.key.pem" -new -x509 -days 7300 -sha256 -extensions v3_ca -out "$dir/rootCA/certs/ca.cert.pem" -subj "/C=$C/ST=$ST/L=$L/O=$O/OU=$OU/CN=Root CA"
 chmod 444 "$dir/rootCA/certs/ca.cert.pem"
-echo ""
-echo "SHOW CONTENT OF ROOT PUBLIC CERTIFICATE"
-echo ""
+printf '\n'
+printf 'SHOW CONTENT OF ROOT PUBLIC CERTIFICATE\n'
+printf '\n'
 openssl x509 -noout -text -in "$dir/rootCA/certs/ca.cert.pem"
-echo ""
-read -p "If root CA public certificate appears to be correct press enter, else press CTRL-C and fix script. : "
-echo ""
+printf '\n'
+read -r -p "If root CA public certificate appears to be correct press enter, else press CTRL-C and fix script. : " _
+printf '\n'
 
 # INTERMEDIATE CA KEY AND CERTIFICATE GENERATION
 INTERCNF="$dir/openssl_intermediate.cnf"
 
-cat <<EOF > $INTERCNF
+cat <<EOF > "$INTERCNF"
 [ ca ]
 default_ca              = CA_default
 
@@ -252,85 +270,92 @@ authorityKeyIdentifier  = keyid,issuer
 subjectKeyIdentifier    = hash
 EOF
 
-echo ""
-echo "Config file for intermediate certificate created. See below"
-echo ""
-cat $INTERCNF
-echo ""
-read -p "If configuration file is correct press ENTER, else press CTRL-C and fix script : "
+printf '\n'
+printf 'Config file for intermediate certificate created. See below\n'
+printf '\n'
+cat "$INTERCNF"
+printf '\n'
+read -r -p "If configuration file is correct press ENTER, else press CTRL-C and fix script : " _
 
-echo "GENERATING INTERMEDIATE CA PRIVATE KEY"
-openssl genrsa -out "$dir/intermediateCA/private/intermediate.key.pem" 4096
+printf 'GENERATING INTERMEDIATE CA PRIVATE KEY\n'
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 -out "$dir/intermediateCA/private/intermediate.key.pem"
 chmod 400 "$dir/intermediateCA/private/intermediate.key.pem"
-echo ""
-echo "Intermediate CA private key created."
-echo ""
-echo "SHOW CONTENTS OF PRIVATE KEY"
-openssl rsa -noout -text -in "$dir/intermediateCA/private/intermediate.key.pem"
-echo ""
-read -p "If private key appears to be correct press enter, else press CTRL-C and fix script. : "
-echo ""
+printf '\n'
+printf 'Intermediate CA private key created.\n'
+printf '\n'
+printf 'CHECKING INTERMEDIATE CA PRIVATE KEY\n'
+openssl rsa -check -noout -in "$dir/intermediateCA/private/intermediate.key.pem"
+printf '\n'
+read -r -p "If private key appears to be correct press enter, else press CTRL-C and fix script. : " _
+printf '\n'
 
-echo "GENERATING CSR TO REQUEST INTERMEDIATE CA PUBLIC CERTIFICATE"
+printf 'GENERATING CSR TO REQUEST INTERMEDIATE CA PUBLIC CERTIFICATE\n'
 openssl req -config "$INTERCNF" -key "$dir/intermediateCA/private/intermediate.key.pem" -new -sha256 -out "$dir/intermediateCA/csr/intermediate.csr.pem" -subj "/C=$C/ST=$ST/L=$L/O=$O/OU=$OU/CN=Intermediate CA"
 
-echo ""
-echo "Certificate Signing Request for Intermediate CA certificate generated, see below"
-echo ""
+printf '\n'
+printf 'Certificate Signing Request for Intermediate CA certificate generated, see below\n'
+printf '\n'
 cat "$dir/intermediateCA/csr/intermediate.csr.pem"
-echo ""
-read -p "If CSR appears to be correct press enter, else press CTRL-C and fix script. : "
-echo ""
+printf '\n'
+read -r -p "If CSR appears to be correct press enter, else press CTRL-C and fix script. : " _
+printf '\n'
 
-echo "REQUESTING INTERMEDIATE CA PUBLIC CERTIFICATE USING CSR FILE"
-openssl ca -config "$ROOTCNF" -extensions v3_intermediate_ca -days 3650 -notext -md sha256 -in "$dir/intermediateCA/csr/intermediate.csr.pem" -out "$dir/intermediateCA/certs/intermediate.cert.pem"
+printf 'REQUESTING INTERMEDIATE CA PUBLIC CERTIFICATE USING CSR FILE\n'
+openssl ca -config "$ROOTCNF" -batch -extensions v3_intermediate_ca -days 3650 -notext -md sha256 -in "$dir/intermediateCA/csr/intermediate.csr.pem" -out "$dir/intermediateCA/certs/intermediate.cert.pem"
 chmod 444 "$dir/intermediateCA/certs/intermediate.cert.pem"
-echo ""
+printf '\n'
 cat "$dir/intermediateCA/certs/intermediate.cert.pem"
-echo ""
-read -p "If cert appears to be correct press enter, else press CTRL-C and fix script. : "
-echo ""
+printf '\n'
+read -r -p "If cert appears to be correct press enter, else press CTRL-C and fix script. : " _
+printf '\n'
 
-echo "VERIFYING CERTIFICATE FILE IS NOW LOCATED IN THE CA INDEX FILE"
-echo ""
+printf 'VERIFYING CERTIFICATE FILE IS NOW LOCATED IN THE CA INDEX FILE\n'
+printf '\n'
 cat "$dir/rootCA/index.txt"
-echo ""
-read -p "If index data appears to be correct press enter, else press CTRL-C and fix script. : "
-echo ""
+printf '\n'
+read -r -p "If index data appears to be correct press enter, else press CTRL-C and fix script. : " _
+printf '\n'
 
-echo "SHOWING CONTENT OF INTERMEDIATE CA PUBLIC CERTIFICATE"
+printf 'SHOWING CONTENT OF INTERMEDIATE CA PUBLIC CERTIFICATE\n'
 openssl x509 -noout -text -in "$dir/intermediateCA/certs/intermediate.cert.pem"
-echo ""
-read -p "If cert contents appear to be correct press enter, else press CTRL-C and fix script. : "
-echo ""
+printf '\n'
+read -r -p "If cert contents appear to be correct press enter, else press CTRL-C and fix script. : " _
+printf '\n'
 
-echo "VERIFYING INTERMEDIATE CERTIFICATE"
+printf 'VERIFYING INTERMEDIATE CERTIFICATE\n'
 openssl verify -CAfile "$dir/rootCA/certs/ca.cert.pem" "$dir/intermediateCA/certs/intermediate.cert.pem"
-echo ""
-read -p "If cert verification appears to be correct press enter, else press CTRL-C and fix script. : "
-echo ""
+printf '\n'
+read -r -p "If cert verification appears to be correct press enter, else press CTRL-C and fix script. : " _
+printf '\n'
 
 # CREATE TRUST CHAIN CERTIFICATE
-echo "CREATING TRUST CHAIN FILE"
+printf 'CREATING TRUST CHAIN FILE\n'
 cat "$dir/intermediateCA/certs/intermediate.cert.pem" "$dir/rootCA/certs/ca.cert.pem" > "$dir/intermediateCA/certs/intermediate.chain.pem"
-echo ""
-echo "Trust chain file contents displayed below"
-echo ""
+printf '\n'
+printf 'Trust chain file contents displayed below\n'
+printf '\n'
 cat "$dir/intermediateCA/certs/intermediate.chain.pem"
-echo ""
-read -p "If cert chain appears to be correct press enter, else press CTRL-C and fix script. : "
-echo ""
+printf '\n'
+read -r -p "If cert chain appears to be correct press enter, else press CTRL-C and fix script. : " _
+printf '\n'
 
-echo "VERIFYING CERTIFICATE CHAIN FILE"
-openssl verify -CAfile "$dir/intermediateCA/certs/intermediate.chain.pem" "$dir/intermediateCA/certs/intermediate.cert.pem"
+printf 'VERIFYING CERTIFICATE CHAIN FILE\n'
+openssl verify -CAfile "$dir/rootCA/certs/ca.cert.pem" "$dir/intermediateCA/certs/intermediate.cert.pem"
 
-# COPY CONVENIENCE FILES TO /root
-cp "$dir/intermediateCA/certs/intermediate.cert.pem" /root/ica.crt
-cp "$dir/intermediateCA/certs/intermediate.chain.pem" /root/ica.chain
-cp "$dir/intermediateCA/private/intermediate.key.pem" /root/ica.key
+# Create safe location to collect ica, rca and chain certs
+mkdir -p "$PUBLIC_CA_DIR"
+chown root:root /opt/myCA "$PUBLIC_CA_DIR"
+chmod 0755 /opt/myCA "$PUBLIC_CA_DIR"
 
-echo ""
-echo "CA build complete. Convenience copies placed in /root/:"
-echo "  /root/ica.crt   - Intermediate CA certificate"
-echo "  /root/ica.chain - Full chain (intermediate + root)"
-echo "  /root/ica.key   - Intermediate CA private key"
+# COPY CONVENIENCE FILES TO /opt/myCA/public
+install -o root -g root -m 0444 "$dir/intermediateCA/certs/intermediate.cert.pem" "$PUBLIC_CA_DIR/ica.crt"
+install -o root -g root -m 0444 "$dir/rootCA/certs/ca.cert.pem" "$PUBLIC_CA_DIR/rca.crt"
+cat "$PUBLIC_CA_DIR/ica.crt" "$PUBLIC_CA_DIR/rca.crt" > "$PUBLIC_CA_DIR/chain.crt"
+chown root:root "$PUBLIC_CA_DIR/chain.crt"
+chmod 0644 "$PUBLIC_CA_DIR/chain.crt"
+
+printf '\n'
+printf 'CA build complete. Convenience copies placed in %s/:\n' "$PUBLIC_CA_DIR"
+printf '  rca.crt   -  Root CA certificate\n'
+printf '  ica.crt   -  Intermediate CA certificate\n'
+printf '  chain.crt -  Full chain (intermediate + root)\n'

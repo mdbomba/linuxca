@@ -1,126 +1,99 @@
 #!/bin/bash
 # filename - gen-csr.sh
-# version - 20250721-02
-# description - Generates a private key and CSR with SAN support
-# usage - sudo bash gen-csr.sh
+# version - 20260919-01
+# description - Generates a private key and CSR with SAN support.
+# run as - Regular user; this workflow does not require CA access.
 
-set -e
-
-if [ "$(id -u)" -ne 0 ]; then
-    echo "ERROR: This script must be run as root."
-    exit 1
-fi
-
-# --- Load or create vars file ---
-VARS_FILE="/root/ca-vars.conf"
-
-load_vars() {
-    [ -f "$VARS_FILE" ] && source "$VARS_FILE"
-}
+set -euo pipefail
 
 prompt_var() {
     local var_name="$1"
     local prompt_msg="$2"
-    local current_val="${!var_name}"
-    if [ -z "$current_val" ]; then
-        read -p "$prompt_msg" "$var_name"
+    local current_val="${!var_name:-}"
+
+    if [[ -z "$current_val" ]]; then
+        read -r -p "$prompt_msg" "$var_name"
     fi
 }
 
-save_vars() {
-    cat > "$VARS_FILE" << EOF
-# ca-vars.conf - Shared variables for CA scripts
-# Edit these values or delete them to be prompted on next run
+if ! command -v openssl > /dev/null; then
+    sudo apt install -y openssl
+fi
 
-# CA hierarchy location
-CA_DIR='${CA_DIR}'
+OUTPUT_DIR="$(pwd -P)"
 
-# Certificate subject fields
-C='${C}'
-ST='${ST}'
-L='${L}'
-O='${O}'
-OU='${OU}'
-EOF
-}
-
-load_vars
-
-prompt_var CA_DIR "Enter CA directory path [/root/myCA]: "
-CA_DIR="${CA_DIR:-/root/myCA}"
-prompt_var C "Enter Country Name (2 letter code): "
-prompt_var ST "Enter State or Province Name: "
-prompt_var L "Enter Locality Name: "
-prompt_var O "Enter Organization Name: "
-prompt_var OU "Enter Organizational Unit Name: "
-
-# Server-specific prompts
-prompt_var COMMON_NAME "Enter Common Name / FQDN (e.g. chef360.demo.lab): "
-prompt_var SAN_DNS "Enter space-separated DNS names (e.g. chef360 chef360.demo.lab): "
-prompt_var SAN_IP "Enter space-separated IP addresses (e.g. 10.0.0.50): "
-
-save_vars
+prompt_var C 'Enter 2 letter Country Code [US]: '
+C="${C:-US}"
+prompt_var ST 'Enter State or Province [AZ]: '
+ST="${ST:-AZ}"
+prompt_var L 'Enter Locality Name [Cochise]: '
+L="${L:-Cochise}"
+prompt_var O 'Enter Organization Name [DemoLab]: '
+O="${O:-DemoLab}"
+prompt_var OU 'Enter Organizational Unit Name [Engineering]: '
+OU="${OU:-Engineering}"
+prompt_var Name 'Enter certificate file name prefix [chef360]: '
+Name="${Name:-chef360}"
+prompt_var CN 'Enter Common Name / FQDN [chef360.demo.lab]: '
+CN="${CN:-chef360.demo.lab}"
+prompt_var CN2 "Enter short hostname [${Name}]: "
+CN2="${CN2:-$Name}"
+while [[ ! "$IP1" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; do
+    read -r -p 'Enter primary IPv4 address: ' IP1
+done
+prompt_var IP2 'Enter secondary IP address (press Enter for none): '
 
 KEY_SIZE=2048
+KEY="${OUTPUT_DIR}/${Name}.key"
+CSR="${OUTPUT_DIR}/${Name}.csr"
+CNF="${OUTPUT_DIR}/${Name}.cnf"
+OUTPUTS=("$KEY" "$CSR" "$CNF")
 
-# Derive base name from CN
-BASE_NAME=$(echo "$COMMON_NAME" | cut -d. -f1)
-OUTPUT_DIR="."
+for output in "${OUTPUTS[@]}"; do
+    if [[ -e "$output" ]]; then
+        read -r -p "Output already exists: ${output}. Replace it? [y/N]: " replace_output
+        if [[ "$replace_output" =~ ^[Yy]$ ]]; then
+            rm -f "$output"
+        else
+            printf 'Retaining existing output: %s\n' "$output"
+            exit 0
+        fi
+    fi
+done
 
-KEY_FILE="${OUTPUT_DIR}/${BASE_NAME}.key"
-CSR_FILE="${OUTPUT_DIR}/${BASE_NAME}.csr"
-CONFIG_FILE="${OUTPUT_DIR}/${BASE_NAME}.cnf"
+SAN_LIST=("DNS:${CN}" "DNS:${CN2}" "IP:${IP1}")
+if [[ -n "${IP2:-}" ]]; then
+    SAN_LIST+=("IP:${IP2}")
+fi
+SAN_VALUE="$(IFS=,; printf '%s' "${SAN_LIST[*]}")"
 
-echo "--- Generating OpenSSL configuration file ---"
-
-cat <<EOF > "${CONFIG_FILE}"
+cat > "$CNF" <<EOF
 [req]
-default_bits = ${KEY_SIZE}
-encrypt_key = no
-default_md = sha256
-prompt = no
+default_bits       = ${KEY_SIZE}
 distinguished_name = req_distinguished_name
-req_extensions = v3_req
+req_extensions     = v3_req
+prompt             = no
 
 [req_distinguished_name]
-C  = ${C}
-ST = ${ST}
-L  = ${L}
-O  = ${O}
-OU = ${OU}
-CN = ${COMMON_NAME}
+C  = $C
+O  = $O
+OU = $OU
+CN = $CN
 
 [v3_req]
-keyUsage = nonRepudiation, digitalSignature, keyEncipherment
+basicConstraints = CA:FALSE
+keyUsage = critical, digitalSignature, keyEncipherment
 extendedKeyUsage = serverAuth
-subjectAltName = @alt_names
-
-[alt_names]
+subjectAltName = $SAN_VALUE
 EOF
 
-# Add DNS entries
-count=1
-for name in $SAN_DNS; do
-    echo "DNS.$count = $name" >> "${CONFIG_FILE}"
-    ((count++))
-done
+openssl req -newkey "rsa:${KEY_SIZE}" -nodes -keyout "$KEY" -out "$CSR" \
+    -subj "/CN=$CN/OU=$OU/O=$O/C=$C" -config "$CNF" -batch
+openssl rsa -in "$KEY" -check -noout
 
-# Add IP entries
-count=1
-for ip in $SAN_IP; do
-    echo "IP.$count = $ip" >> "${CONFIG_FILE}"
-    ((count++))
-done
+chmod 600 "$KEY"
+chmod 644 "$CSR" "$CNF"
 
-echo "--- Generating Private Key and CSR for ${COMMON_NAME} with SANs ---"
-
-openssl req -new -nodes -newkey rsa:${KEY_SIZE} -keyout "${KEY_FILE}" -out "${CSR_FILE}" -config "${CONFIG_FILE}"
-
-echo "--- Process Complete ---"
-echo "Private Key saved to: ${KEY_FILE}"
-echo "CSR saved to: ${CSR_FILE}"
-echo "Config file saved to: ${CONFIG_FILE}"
-
-echo ""
-echo "--- Verifying CSR details and SAN attributes ---"
-openssl req -text -noout -verify -in "${CSR_FILE}"
+printf 'Created CSR material in %s:\n' "$OUTPUT_DIR"
+printf '  %s\n' "${OUTPUTS[@]}"
+openssl req -text -noout -verify -in "$CSR"

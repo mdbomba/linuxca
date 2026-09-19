@@ -1,176 +1,159 @@
 # Private Lab CA Toolkit
 
-A set of bash scripts to build and operate a private Certificate Authority on Linux for lab environments.
+A collection of bash scripts to build and operate a private Certificate Authority (CA) for lab environments, backed by a Root CA + Intermediate CA hierarchy and TLS server certificates with Subject Alternative Names (SAN).
 
-## Features
+Current version: **20260919-01**
 
-- Root CA + Intermediate CA hierarchy (proper chain of trust)
-- TLS server certificates with Subject Alternative Names (SAN)
-- Multiple workflows: all-in-one, CSR-only, or sign-existing-CSR
-- Shared configuration via `ca-vars.conf` (prompts for missing values, saves for reuse)
-- Entity identity certificates (planned)
-
-## File Layout
-
-```
-/root/
-├── ca-vars.conf              # Shared variables (auto-created on first run)
-├── build-ca.sh               # Creates Root CA + Intermediate CA hierarchy
-├── gen-crt-and-key.sh        # Generates key + CSR + signed cert + PFX (all-in-one)
-├── gen-csr.sh                # Generates key + CSR only (for external signing)
-├── gen-crt-from-csr.sh       # Signs an existing CSR into a certificate
-└── myCA/                     # CA hierarchy (created by build-ca.sh)
-    ├── openssl_root.cnf
-    ├── openssl_intermediate.cnf
-    ├── rootCA/
-    │   ├── certs/ca.cert.pem
-    │   ├── private/ca.key.pem
-    │   ├── crl/
-    │   ├── newcerts/
-    │   ├── index.txt
-    │   └── serial
-    └── intermediateCA/
-        ├── certs/
-        │   ├── intermediate.cert.pem
-        │   └── intermediate.chain.pem
-        ├── private/intermediate.key.pem
-        ├── crl/
-        ├── newcerts/
-        ├── index.txt
-        └── serial
-```
-
-## Quick Start
-
-### Prerequisites
+## Requirements
 
 - Linux (tested on Ubuntu 22.04 / Linux Mint 22)
-- OpenSSL
-- Run all scripts as root
+- OpenSSL 3.x (`openssl`), `tree`, `zip`
+- Scripts needing CA access run privileged where required (see table below)
+- `sudo` rights for the current user for signing scripts
+
+## Scripts
+
+| Script | Must run as | Purpose |
+|--------|-------------|---------|
+| `build-ca.sh` | root | One-time CA build: Root CA + Intermediate CA hierarchy |
+| `gen-csr.sh` | regular user | Generate a private key + CSR with SANs (no CA access) |
+| `gen-crt-and-key.sh` | regular user | All-in-one: key + CSR + signed cert + chain + PFX + ZIP |
+| `gen-crt-from-csr.sh` | regular user | Sign an existing CSR (extracts CN + SANs from it) |
+
+All signing actions (those that read the CA private key) run under `sudo`; everything else runs as the invoking user.
+
+## CA layout
+
+The CA is created under `/root/myCA`. Convenience copies of the CA certificates are placed in `/opt/myCA/public`.
+
+```
+/root/myCA/
+├── openssl_root.cnf              # Root CA openssl config
+├── openssl_intermediate.cnf      # Intermediate CA openssl config
+├── rootCA/
+│   ├── certs/ca.cert.pem         # Root CA certificate
+│   ├── private/ca.key.pem        # Root CA private key (root-only)
+│   ├── crl/ newcerts/ csr/
+│   ├── index.txt                 # Issued-certificate database
+│   └── serial crlnumber
+└── intermediateCA/
+    ├── certs/
+    │   ├── intermediate.cert.pem # Intermediate CA certificate
+    │   └── intermediate.chain.pem# Chain (intermediate + root)
+    ├── private/intermediate.key.pem  # Intermediate CA private key (root-only)
+    ├── crl/ newcerts/ csr/
+    ├── index.txt
+    └── serial crlnumber
+
+/opt/myCA/public/                 # World-readable convenience copies
+├── rca.crt                       # Root CA certificate
+├── ica.crt                       # Intermediate CA certificate
+└── chain.crt                     # Full chain (intermediate + root)
+```
+
+## 1. Build the CA (one-time, as root)
 
 ```bash
 sudo su
-apt update && apt upgrade -y
-```
-
-### 1. Build the CA (one-time setup)
-
-```bash
-cp build-ca.sh gen-crt-and-key.sh gen-csr.sh gen-crt-from-csr.sh /root/
+cp build-ca.sh gen-csr.sh gen-crt-and-key.sh gen-crt-from-csr.sh /root/
 chmod +x /root/*.sh
 bash /root/build-ca.sh
 ```
 
-On first run, you will be prompted for:
-- `CA_DIR` - where to store the CA (default: `/root/myCA`)
-- `C`, `ST`, `L`, `O`, `OU` - certificate subject fields
+What it does:
 
-Values are saved to `/root/ca-vars.conf` for all future scripts.
+- Prompts for the subject fields `C` `ST` `L` `O` `OU` (defaults: US / AZ / Cochise / Lab / Home).
+- Installs `tree` if missing, then creates the directory skeleton and OpenSSL configs. Each generated artifact is displayed and requires pressing Enter (or Ctrl-C to abort).
+- Generates the Root CA key (RSA 4096) and self-signed certificate (7300 days / 20 years).
+- Generates the Intermediate CA key (RSA 4096), CSR, and issues the Intermediate CA certificate (3650 days / 10 years, `pathlen:0`).
+- Verifies the chain and writes `rca.crt` / `ica.crt` / `chain.crt` to `/opt/myCA/public`.
 
-### 2. Issue a TLS Certificate (key + cert + PFX)
+Re-run behavior:
+
+- If a **complete** CA already exists (root + intermediate key/cert all present), the script reports this and exits without prompting.
+- If an **incomplete/broken** hierarchy is found (e.g. an interrupted build), it warns and offers to wipe and rebuild — you must type `wipe` to delete `/root/myCA` and `/opt/myCA/public` and start fresh. Any certificate previously issued by that CA becomes invalid.
+
+## 2. All-in-one: key + CSR + signed cert + PFX + ZIP
 
 ```bash
 bash /root/gen-crt-and-key.sh
 ```
 
-Prompts for: file prefix, FQDN, hostname, IP addresses, password.
+Prompts for: archive/PFX password, subject fields, file name prefix, FQDN/CN, short hostname, primary IPv4 (validated), optional secondary IP.
 
-Produces in the current directory:
-- `<name>.key` - private key
-- `<name>.crt` - signed certificate
-- `<name>.pfx` - PKCS#12 bundle
-- `<name>_ica.chain` - CA chain file
-- `<name>_ica.crt` - Intermediate CA cert
-- `<name>_rca.crt` - Root CA cert
-- `<name>_certs.zip` - encrypted archive of all files
+Produces in the current directory (`Name` = prefix, default `chef360`):
 
-### 3. Generate a CSR Only (for external signing workflow)
+- `Name.key` / `Name.csr` / `Name.cnf` — private key (RSA 2048), CSR, openssl config
+- `Name.crt` — signed server certificate (365 days)
+- `Name_chain.crt` — CA chain file
+- `Name_ica.crt` / `Name_rca.crt` — convenience copies of the CA certs
+- `Name.pfx` — PKCS#12 bundle (password protected)
+- `Name_certs.zip` — encrypted ZIP of all of the above (same password)
+
+## 3. CSR only (key + CSR, no CA access)
 
 ```bash
 bash /root/gen-csr.sh
 ```
 
-Prompts for: FQDN, DNS names, IP addresses.
+Prompts for subject fields, prefix, FQDN, hostname, and IP addresses. Produces `Name.key`, `Name.csr`, `Name.cnf` (RSA 2048). Use `gen-crt-from-csr.sh` to sign it.
 
-Produces:
-- `<name>.key` - private key
-- `<name>.csr` - certificate signing request
-- `<name>.cnf` - OpenSSL config used
-
-### 4. Sign an Existing CSR
+## 4. Sign an existing CSR
 
 ```bash
 bash /root/gen-crt-from-csr.sh [path/to/file.csr]
 ```
 
-Extracts SANs from the CSR and issues a signed certificate. If no argument is given, prompts for the CSR filename.
+Reads the CN and Subject Alternative Names directly from the CSR and issues a certificate (365 days). Produces `<base>.crt`, `<base>.cfg`, and `<base>_chain.crt`. If the CSR lacks a CN or any SANs, the script aborts.
 
-Produces:
-- `<name>.crt` - signed certificate
-- `<name>.chain` - CA chain file
-
-## Configuration
-
-All shared variables are stored in `/root/ca-vars.conf`:
-
-```
-CA_DIR='/root/myCA'
-C='US'
-ST='Arizona'
-L='Tombstone'
-O='lab'
-OU='demo'
-```
-
-- Delete a value to be prompted for it on next run.
-- Delete the entire file to reset all defaults.
-
-## Deploying to a New Host
-
-```bash
-scp /root/build-ca.sh /root/gen-crt-and-key.sh /root/gen-csr.sh \
-    /root/gen-crt-from-csr.sh root@new-host:/root/
-ssh root@new-host 'bash /root/build-ca.sh'
-```
-
-## Certificate Validity
+## Certificate validity
 
 | Certificate | Validity |
 |-------------|----------|
 | Root CA | 20 years (7300 days) |
 | Intermediate CA | 10 years (3650 days) |
-| Server certs | 1 year (365 days) |
+| Server certificates | 1 year (365 days) |
 
-## Trusting the CA on Clients
+## How signing and serials work
 
-### Linux (NSS/browser)
+- `build-ca.sh` issues the intermediate certificate through `openssl ca`, using the Root CA's `index.txt` / `serial` database.
+- The signing scripts (`gen-crt-and-key.sh`, `gen-crt-from-csr.sh`) sign leaf certificates with `openssl x509 -req -CAcreateserial`. The serial file is maintained as `intermediate.cert.pem.srl`, stored next to the real intermediate certificate under `/root/myCA/intermediateCA/certs/`.
+
+## Security notes
+
+- CA private keys are **unencrypted** and protected only by the filesystem: the scripts run under `umask 077`, so everything under `/root/myCA` is root-only, and keys are `chmod 400`.
+- Access to CA material on the build host is effectively restricted to `root`.
+
+## Trusting the CA on clients
+
+### Linux (browser / NSS)
 
 ```bash
-certutil -d sql:$HOME/.pki/nssdb -A -t "C,," -n lab_root_ca -i /root/myCA/rootCA/certs/ca.cert.pem
-certutil -d sql:$HOME/.pki/nssdb -A -t "C,," -n lab_intermediate_ca -i /root/myCA/intermediateCA/certs/intermediate.cert.pem
+certutil -d sql:$HOME/.pki/nssdb -A -t "C,," -n lab_root_ca -i /opt/myCA/public/rca.crt
+certutil -d sql:$HOME/.pki/nssdb -A -t "C,," -n lab_intermediate_ca -i /opt/myCA/public/ica.crt
 ```
 
 ### Linux (system-wide)
 
 ```bash
-cp /root/myCA/rootCA/certs/ca.cert.pem /usr/local/share/ca-certificates/lab-root-ca.crt
-cp /root/myCA/intermediateCA/certs/intermediate.cert.pem /usr/local/share/ca-certificates/lab-intermediate-ca.crt
+cp /opt/myCA/public/rca.crt /usr/local/share/ca-certificates/lab-root-ca.crt
+cp /opt/myCA/public/ica.crt /usr/local/share/ca-certificates/lab-intermediate-ca.crt
 update-ca-certificates
 ```
 
 ### Windows
 
-Import the Root CA and Intermediate CA `.crt` files into the Trusted Root / Intermediate certificate stores via `certmgr.msc` or GPO.
+Import `rca.crt` and `ica.crt` into the Trusted Root / Intermediate certificate stores via `certmgr.msc` or GPO.
 
-## Planned Features
+## Deploying to a new host
 
-- Entity identity certificates (client auth / mTLS)
-- CRL generation and distribution
-- OCSP responder configuration
+```bash
+scp /root/build-ca.sh /root/gen-csr.sh /root/gen-crt-and-key.sh \
+    /root/gen-crt-from-csr.sh root@new-host:/root/
+ssh root@new-host 'bash /root/build-ca.sh'
+```
 
 ## References
-
-These scripts are consolidated primarily from the work represented at the following URLs:
 
 - https://www.golinuxcloud.com/openssl-create-certificate-chain-linux/
 - https://www.golinuxcloud.com/openssl-subject-alternative-name/
