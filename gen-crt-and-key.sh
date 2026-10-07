@@ -1,10 +1,18 @@
 #!/bin/bash
 # filename - gen-crt-and-key.sh
-# version - 20260919-01
+# version - 20261006-01
 # description - Generates a server private key, CSR, signed TLS certificate, and PFX file.
 # run as - Regular user; sudo is requested only to read the CA private key.
 
 set -euo pipefail
+
+[[ -d ~/certs ]] || mkdir ~/certs 2>&1
+
+OUTPUT_DIR=~/certs
+RCA_CERT="/opt/myCA/public/rca.crt"
+ICA_CERT="/opt/myCA/public/ica.crt"
+CHAIN_CERT="/opt/myCA/public/chain.crt"
+ICA_KEY="/root/myCA/intermediateCA/private/intermediate.key.pem"
 
 prompt_var() {
     local var_name="$1"
@@ -17,8 +25,8 @@ prompt_var() {
 }
 
 require_file() {
-    if [[ ! -f "$1" ]]; then
-        printf 'ERROR: Required file not found: %s\n' "$1" >&2
+    if sudo test ! -r "$1"; then
+        echo "TERMINAL ERROR: Required file not found: $1" >&2
         exit 1
     fi
 }
@@ -31,53 +39,50 @@ if ! command -v zip > /dev/null; then
     sudo apt install -y zip
 fi
 
-OUTPUT_DIR="$(pwd -P)"
-RCA_CERT="/opt/myCA/public/rca.crt"
-ICA_CERT="/opt/myCA/public/ica.crt"
-ICA_CA_CERT="/root/myCA/intermediateCA/certs/intermediate.cert.pem"
-ICA_KEY="/root/myCA/intermediateCA/private/intermediate.key.pem"
-
-prompt_var password 'Enter password for PFX and ZIP archive [password]: '
+prompt_var password "Enter password for PFX and ZIP archive [password]: "
 password="${password:-password}"
-prompt_var C 'Enter 2 letter Country Code [US]: '
+prompt_var C "Enter 2 letter Country Code [US]: "
 C="${C:-US}"
-prompt_var ST 'Enter State or Province [AZ]: '
+prompt_var ST "Enter State or Province [AZ]: "
 ST="${ST:-AZ}"
-prompt_var L 'Enter Locality Name [Cochise]: '
+prompt_var L "Enter Locality Name [Cochise]: "
 L="${L:-Cochise}"
-prompt_var O 'Enter Organization Name [DemoLab]: '
-O="${O:-DemoLab}"
-prompt_var OU 'Enter Organizational Unit Name [Engineering]: '
-OU="${OU:-Engineering}"
-prompt_var Name 'Enter certificate file name prefix [chef360]: '
-Name="${Name:-chef360}"
-prompt_var CN 'Enter Common Name / FQDN [chef360.demo.lab]: '
-CN="${CN:-chef360.demo.lab}"
-prompt_var CN2 "Enter short hostname [${Name}]: "
-CN2="${CN2:-$Name}"
+prompt_var O "Enter Organization Name [lab]: "
+O="${O:-lab}"
+prompt_var OU "Enter Organizational Unit Name [demo]: "
+OU="${OU:-demo}"
+prompt_var CN2 "Enter short hostname [server]: "
+CN2="${CN2:-server}"
+prompt_var CN "Enter host FQDN [$CN2.$OU.$O]: "
+CN="${CN:-$CN2.$OU.$O}"
+prompt_var Name "Enter certificate file name prefix [$CN2]: "
+Name="${Name:-$CN2}"
+
+IP1=""
 while [[ ! "$IP1" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; do
-    read -r -p 'Enter primary IPv4 address: ' IP1
+    read -r -p "Enter primary IPv4 address: " IP1
 done
-prompt_var IP2 'Enter secondary IP address (press Enter for none): '
+prompt_var IP2 "Enter secondary IP address (press Enter for none): "
 
 CSR="${OUTPUT_DIR}/${Name}.csr"
 CNF="${OUTPUT_DIR}/${Name}.cnf"
 KEY="${OUTPUT_DIR}/${Name}.key"
 CRT="${OUTPUT_DIR}/${Name}.crt"
-CHAIN="${OUTPUT_DIR}/${Name}_chain.crt"
-ICA="${OUTPUT_DIR}/${Name}_ica.crt"
-RCA="${OUTPUT_DIR}/${Name}_rca.crt"
-ARCHIVE="${OUTPUT_DIR}/${Name}_certs.zip"
-PFX_FILE="${OUTPUT_DIR}/${Name}.pfx"
-OUTPUTS=("$CSR" "$CNF" "$KEY" "$CRT" "$CHAIN" "$ICA" "$RCA" "$ARCHIVE" "$PFX_FILE")
+PFX="${OUTPUT_DIR}/${Name}.pfx"
+ZIP="${OUTPUT_DIR}/${Name}_certs.zip"
+
+CHAIN="${OUTPUT_DIR}/ca_chain.crt"
+ICA="${OUTPUT_DIR}/ca_ica.crt"
+RCA="${OUTPUT_DIR}/ca_rca.crt"
+OUTPUTS=("$KEY" "$CRT" "$PFX")
 
 for output in "${OUTPUTS[@]}"; do
     if [[ -e "$output" ]]; then
-        read -r -p "Output already exists: ${output}. Replace it? [y/N]: " replace_output
+        read -r -p "Certificates already exist: ${output}. Replace it? [y/N]: " replace_output
         if [[ "$replace_output" =~ ^[Yy]$ ]]; then
             rm -f "$output"
         else
-            printf 'Retaining existing output: %s\n' "$output"
+            printf "Retaining existing output: %s\n" "$output"
             exit 0
         fi
     fi
@@ -85,18 +90,17 @@ done
 
 require_file "$RCA_CERT"
 require_file "$ICA_CERT"
-if ! sudo test -r "$ICA_KEY"; then
-    printf 'ERROR: Cannot read intermediate CA key: %s\n' "$ICA_KEY" >&2
-    exit 1
-fi
+require_file "$ICA_KEY"
+require_file "$CHAIN_CERT"
+
 
 SAN_LIST=("DNS:${CN}" "DNS:${CN2}" "IP:${IP1}")
 [[ -z "${IP2:-}" ]] || SAN_LIST+=("IP:${IP2}")
-SAN_VALUE="$(IFS=,; printf '%s' "${SAN_LIST[*]}")"
+SAN_VALUE="$(IFS=,; printf "%s" "${SAN_LIST[*]}")"
 
 install -m 0644 "$ICA_CERT" "$ICA"
 install -m 0644 "$RCA_CERT" "$RCA"
-cat "$ICA_CERT" "$RCA_CERT" > "$CHAIN"
+install -m 0644 "$CHAIN_CERT" "$CHAIN"
 
 cat > "$CNF" <<EOF
 [req]
@@ -120,20 +124,32 @@ EOF
 
 openssl req -newkey rsa:2048 -nodes -keyout "$KEY" -out "$CSR" \
     -subj "/CN=$CN/OU=$OU/O=$O/C=$C" -config "$CNF" -batch
+
 openssl rsa -in "$KEY" -check -noout
 
-sudo openssl x509 -req -in "$CSR" -CA "$ICA_CA_CERT" -CAkey "$ICA_KEY" \
+sudo openssl x509 -req -in "$CSR" -CA "$ICA_CERT" -CAkey "$ICA_KEY" \
     -CAcreateserial -out "$CRT" -days 365 -sha256 \
     -extfile "$CNF" -extensions v3_req
+
 sudo chown "$(id -un):$(id -gn)" "$CRT"
 
 openssl verify -purpose sslserver -CAfile "$CHAIN" "$CRT"
-openssl pkcs12 -export -out "$PFX_FILE" -inkey "$KEY" -in "$CRT" \
+
+openssl pkcs12 -export -out "$PFX" -inkey "$KEY" -in "$CRT" \
     -certfile "$CHAIN" -passout "pass:${password}"
-zip -j -P "$password" "$ARCHIVE" "$CRT" "$KEY" "$CHAIN" "$ICA" "$RCA" "$PFX_FILE"
 
-chmod 600 "$KEY" "$PFX_FILE" "$ARCHIVE"
-chmod 644 "$CSR" "$CNF" "$CRT" "$CHAIN" "$ICA" "$RCA"
+zip -j -P "$password" "$ZIP" "$CRT" "$KEY" "$CHAIN" "$ICA" "$RCA" "$PFX"
 
-printf 'Created certificate material in %s:\n' "$OUTPUT_DIR"
-printf '  %s\n' "${OUTPUTS[@]}"
+rm "${CSR}"
+rm "${CNF}"
+
+chmod 600 "$KEY" "$PFX" "$ZIP"
+chmod 644 "$CRT" "$CHAIN" "$ICA" "$RCA"
+
+echo ""
+echo ""
+echo "Created certificate material in : " ~/certs
+echo ""
+
+ls -la ~/certs
+

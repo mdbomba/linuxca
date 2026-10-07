@@ -70,10 +70,10 @@ prompt_var ST "Enter State or Province [AZ]: "
 ST="${ST:-AZ}"
 prompt_var L "Enter Locality Name [Cochise]: "
 L="${L:-Cochise}"
-prompt_var O "Enter Organization Name [Lab]: "
-O="${O:-Lab}"
-prompt_var OU "Enter Organizational Unit Name [Home]: "
-OU="${OU:-Home}"
+prompt_var O "Enter Organization Name [Demo]: "
+O="${O:-Demo}"
+prompt_var OU "Enter Organizational Unit Name [Lab]: "
+OU="${OU:-Lab}"
 
 
 # Ensure tree is installed
