@@ -6,13 +6,14 @@
 
 set -euo pipefail
 
-[[ -d ~/certs ]] || mkdir ~/certs 2>&1
+OUTPUT_DIR="$HOME/certs"
+mkdir -p "$OUTPUT_DIR"
 
-OUTPUT_DIR=~/certs
 RCA_CERT="/opt/myCA/public/rca.crt"
 ICA_CERT="/opt/myCA/public/ica.crt"
 CHAIN_CERT="/opt/myCA/public/chain.crt"
 ICA_KEY="/root/myCA/intermediateCA/private/intermediate.key.pem"
+VALIDITY_DAYS=365
 
 prompt_var() {
     local var_name="$1"
@@ -74,7 +75,8 @@ ZIP="${OUTPUT_DIR}/${Name}_certs.zip"
 CHAIN="${OUTPUT_DIR}/ca_chain.crt"
 ICA="${OUTPUT_DIR}/ca_ica.crt"
 RCA="${OUTPUT_DIR}/ca_rca.crt"
-OUTPUTS=("$KEY" "$CRT" "$PFX")
+
+OUTPUTS=("$KEY" "$CRT" "$PFX" "$ZIP")
 
 for output in "${OUTPUTS[@]}"; do
     if [[ -e "$output" ]]; then
@@ -127,9 +129,15 @@ openssl req -newkey rsa:2048 -nodes -keyout "$KEY" -out "$CSR" \
 
 openssl rsa -in "$KEY" -check -noout
 
-sudo openssl x509 -req -in "$CSR" -CA "$ICA_CERT" -CAkey "$ICA_KEY" \
-    -CAcreateserial -out "$CRT" -days 365 -sha256 \
-    -extfile "$CNF" -extensions v3_req
+sudo openssl x509 -req -in "$CSR" \
+    -CA "$ICA_CERT" \
+    -CAkey "$ICA_KEY" \
+    -CAcreateserial \
+    -out "$CRT" \
+    -days "$VALIDITY_DAYS" \
+    -sha256 \
+    -extfile "$CNF" \
+    -extensions v3_req
 
 sudo chown "$(id -un):$(id -gn)" "$CRT"
 
@@ -148,8 +156,8 @@ chmod 644 "$CRT" "$CHAIN" "$ICA" "$RCA"
 
 echo ""
 echo ""
-echo "Created certificate material in : " ~/certs
+echo "Created certificate material in : $OUTPUT_DIR"
 echo ""
 
-ls -la ~/certs
+ls -la "$OUTPUT_DIR"
 

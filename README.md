@@ -2,7 +2,7 @@
 
 A collection of bash scripts to build and operate a private Certificate Authority (CA) for lab environments, backed by a Root CA + Intermediate CA hierarchy and TLS server certificates with Subject Alternative Names (SAN).
 
-Current version: **20260919-01**
+Current version: **20261006-01**
 
 ## Requirements
 
@@ -81,12 +81,12 @@ bash /root/gen-crt-and-key.sh
 
 Prompts for: archive/PFX password, subject fields, file name prefix, FQDN/CN, short hostname, primary IPv4 (validated), optional secondary IP.
 
-Produces in the current directory (`Name` = prefix, default `chef360`):
+Produces in `~/certs` (`Name` = prefix, default `server`):
 
-- `Name.key` / `Name.csr` / `Name.cnf` — private key (RSA 2048), CSR, openssl config
+- `Name.key` — private key (RSA 2048)
 - `Name.crt` — signed server certificate (365 days)
-- `Name_chain.crt` — CA chain file
-- `Name_ica.crt` / `Name_rca.crt` — convenience copies of the CA certs
+- `ca_chain.crt` — CA chain file
+- `ca_ica.crt` / `ca_rca.crt` — convenience copies of the CA certs
 - `Name.pfx` — PKCS#12 bundle (password protected)
 - `Name_certs.zip` — encrypted ZIP of all of the above (same password)
 
@@ -96,7 +96,7 @@ Produces in the current directory (`Name` = prefix, default `chef360`):
 bash /root/gen-csr.sh
 ```
 
-Prompts for subject fields, prefix, FQDN, hostname, and IP addresses. Produces `Name.key`, `Name.csr`, `Name.cnf` (RSA 2048). Use `gen-crt-from-csr.sh` to sign it.
+Prompts for subject fields, hostname, FQDN, file name prefix, and IP addresses. Produces `Name.key`, `Name.csr`, `Name.cnf` (RSA 2048) in `~/certs`. Use `gen-crt-from-csr.sh` to sign it.
 
 ## 4. Sign an existing CSR
 
@@ -104,7 +104,7 @@ Prompts for subject fields, prefix, FQDN, hostname, and IP addresses. Produces `
 bash /root/gen-crt-from-csr.sh [path/to/file.csr]
 ```
 
-Reads the CN and Subject Alternative Names directly from the CSR and issues a certificate (365 days). Produces `<base>.crt`, `<base>.cfg`, and `<base>_chain.crt`. If the CSR lacks a CN or any SANs, the script aborts.
+Reads the CN and Subject Alternative Names directly from the CSR and issues a certificate (365 days). Produces `<base>.crt`, `<base>.cfg`, and `<base>_chain.crt` in `~/certs`. If the CSR lacks a CN or any SANs, the script aborts.
 
 ## Certificate validity
 
