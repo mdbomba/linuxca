@@ -24,7 +24,7 @@ All signing actions (those that read the CA private key) run under `sudo`; every
 
 ## CA layout
 
-The CA is created under `/root/myCA`. Convenience copies of the CA certificates are placed in `/opt/myCA/public`.
+The private CA hierarchy and its OpenSSL databases are kept under `/root/myCA`, which is accessible only to root. CA certificates needed by regular users are published under `/opt/myCA/public`, whose directories are traversable and whose certificate files are world-readable. Users do not need access to `/root/myCA` to generate or validate certificates. Signing still uses `sudo` to access the intermediate CA private key.
 
 ```
 /root/myCA/
@@ -51,6 +51,8 @@ The CA is created under `/root/myCA`. Convenience copies of the CA certificates 
 └── chain.crt                     # Full chain (intermediate + root)
 ```
 
+The copies in `/opt/myCA/public` are the public CA material used by the certificate-generation scripts and client trust setup. The intermediate private key and CA databases remain under `/root/myCA` and must not be made accessible to regular users.
+
 ## 1. Build the CA (one-time, as root)
 
 ```bash
@@ -66,7 +68,7 @@ What it does:
 - Installs `tree` if missing, then creates the directory skeleton and OpenSSL configs. Each generated artifact is displayed and requires pressing Enter (or Ctrl-C to abort).
 - Generates the Root CA key (RSA 4096) and self-signed certificate (7300 days / 20 years).
 - Generates the Intermediate CA key (RSA 4096), CSR, and issues the Intermediate CA certificate (3650 days / 10 years, `pathlen:0`).
-- Verifies the chain and writes `rca.crt` / `ica.crt` / `chain.crt` to `/opt/myCA/public`.
+- Verifies the chain and installs world-readable `rca.crt` / `ica.crt` / `chain.crt` copies in `/opt/myCA/public` for certificate generation and client trust setup.
 
 Re-run behavior:
 
@@ -117,12 +119,12 @@ Reads the CN and Subject Alternative Names directly from the CSR and issues a ce
 ## How signing and serials work
 
 - `build-ca.sh` issues the intermediate certificate through `openssl ca`, using the Root CA's `index.txt` / `serial` database.
-- The signing scripts (`gen-crt-and-key.sh`, `gen-crt-from-csr.sh`) sign leaf certificates with `openssl x509 -req -CAcreateserial`. The serial file is maintained as `intermediate.cert.pem.srl`, stored next to the real intermediate certificate under `/root/myCA/intermediateCA/certs/`.
+- The signing scripts (`gen-crt-and-key.sh`, `gen-crt-from-csr.sh`) read the intermediate certificate from `/opt/myCA/public/ica.crt` and use `sudo` to access the intermediate private key under `/root/myCA`. OpenSSL maintains the leaf-certificate serial in `/opt/myCA/public/ica.crt.srl`, alongside the public intermediate certificate.
 
 ## Security notes
 
-- CA private keys are **unencrypted** and protected only by the filesystem: the scripts run under `umask 077`, so everything under `/root/myCA` is root-only, and keys are `chmod 400`.
-- Access to CA material on the build host is effectively restricted to `root`.
+- CA private keys are **unencrypted** and protected by filesystem permissions: everything under `/root/myCA` is root-only, and keys are `chmod 400`.
+- Only public certificates are exposed under `/opt/myCA/public`. Access to CA private keys and issuance databases remains restricted to `root`.
 
 ## Trusting the CA on clients
 
